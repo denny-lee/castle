@@ -4,6 +4,7 @@ import { makeCamera, beginView, renderScene, project, DEG } from '../camera.js';
 import { PAPER, paperGrain, label, sketchPoly } from '../sketch.js';
 import { hallGeometry, EYE_Y, HALL_R } from '../geom/room.js';
 import { makeViewCache, camKey } from '../cache.js';
+import { torchlight } from '../light.js';
 
 export function makeHall(app, rooms, startIndex = 0) {
   const geom = hallGeometry(rooms);
@@ -12,12 +13,14 @@ export function makeHall(app, rooms, startIndex = 0) {
   let targetYaw = geom.doors[sel].theta;
   cam.yaw = targetYaw;
   const cache = makeViewCache();
+  let clock = 0;
 
   return {
     name: 'hall',
     get selectedIndex() { return sel; },
 
     update(dt) {
+      clock += dt;
       // Ease the view toward the chosen door rather than snapping.
       const k = 1 - Math.exp(-dt * 7);
       cam.yaw += (targetYaw - cam.yaw) * k;
@@ -50,6 +53,8 @@ export function makeHall(app, rooms, startIndex = 0) {
       if (scr.every(Boolean)) {
         sketchPoly(ctx, scr, 31337, { color: '#7a3b2e', alpha: 0.5, width: 1.4, passes: 1 });
       }
+
+      torchlight(ctx, w, h, clock);
 
       label(ctx, rooms[sel].name, w / 2, h - 86, Math.min(40, w * 0.055), { weight: 'bold', alpha: 0.85 });
       label(ctx, `${sel + 1} / ${rooms.length}`, w / 2, h - 56, 14, { alpha: 0.45 });

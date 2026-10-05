@@ -7,6 +7,9 @@
 // occupy local z in [-depth, 0], growing out of the wall toward the viewer.
 
 import { box, prism } from '../camera.js';
+import { overdueDaysFor } from '../pace.js';
+
+const ACCENT = '#7a3b2e';
 
 export const HALL_R = 11;
 export const HALL_H = 7.5;
@@ -204,6 +207,28 @@ export function shelfGeometry(shelf, place, id) {
         const y0 = yb + t;
         faces.push(...box(cx - bw / 2, y0, -bd, cx + bw / 2, y0 + bh, -0.1, cellId, { shadeZ: 0.2, shadeX: 0.5 }));
         texts.push({ pos: [cx, y0 + bh * 0.5, -bd - 0.02], text: 'TRASH', size: 0.17, opts: { alpha: 0.6 } });
+
+        // Finished cards pile up visibly: slips poking out of the top, fanned a
+        // little, so a well-worked shelf looks worked.
+        const binned = shelf.boxes.reduce((n, bx2) => n + (bx2.doneCount || 0), 0);
+        const slips = Math.min(binned, 9);
+        for (let k = 0; k < slips; k++) {
+          const lean = ((k % 3) - 1) * 0.055;
+          const sy = y0 + bh - 0.03 + k * 0.022;
+          const sx = cx + lean * 0.6;
+          segs.push({
+            a: [sx - bw * 0.3, sy, -bd + 0.06],
+            b: [sx + bw * 0.3, sy + lean, -bd + 0.06],
+            id: cellId + 300 + k,
+            opts: { alpha: 0.55, width: 1.1, passes: 1 },
+          });
+        }
+        if (binned > 0) {
+          texts.push({
+            pos: [cx, y0 + bh * 0.22, -bd - 0.02],
+            text: String(binned), size: 0.15, opts: { alpha: 0.6, weight: 'bold' },
+          });
+        }
         cells.set(`${lv},${sl}`, {
           bin: true, box: null,
           rect: [[cx - bw / 2, y0, -bd], [cx + bw / 2, y0, -bd], [cx + bw / 2, y0 + bh, -bd], [cx - bw / 2, y0 + bh, -bd]].map(place),
@@ -220,6 +245,7 @@ export function shelfGeometry(shelf, place, id) {
       const bw = pitch * 0.84, bh = band * 0.62, bd = D * 0.8;
       const y0 = yb + t;
       const zf = -(0.08 + bd);
+      const overdue = overdueDaysFor(bx);
       faces.push(...box(cx - bw / 2, y0, zf, cx + bw / 2, y0 + bh, -0.08, cellId, { shadeZ: 0.12, shadeX: 0.45 }));
       // label plate on the box front
       faces.push({
@@ -227,11 +253,28 @@ export function shelfGeometry(shelf, place, id) {
             [cx + bw * 0.42, y0 + bh * 0.68, zf - 0.015], [cx - bw * 0.42, y0 + bh * 0.68, zf - 0.015]],
         id: cellId + 5, fill: '#efe9da', shade: 0,
       });
-      texts.push({ pos: [cx, y0 + bh * 0.45, zf - 0.03], text: bx.label, size: 0.12, opts: { weight: 'bold' } });
+      texts.push({
+        pos: [cx, y0 + bh * 0.45, zf - 0.03], text: bx.label, size: 0.12,
+        opts: { weight: 'bold', color: overdue ? ACCENT : undefined },
+      });
       if (bx.remaining > 0) {
         texts.push({
           pos: [cx, y0 + bh * 0.82, zf - 0.03],
-          text: '‖'.repeat(Math.min(bx.remaining, 6)), size: 0.14, opts: { alpha: 0.5 },
+          text: '‖'.repeat(Math.min(bx.remaining, 6)), size: 0.14,
+          opts: { alpha: 0.5, color: overdue ? ACCENT : undefined },
+        });
+      }
+      if (overdue > 0) {
+        // A folded corner on the label plate: visible across the room, and it
+        // does not need the text to be legible to read as "this one is late".
+        const px = cx + bw * 0.42, py = y0 + bh * 0.68, fold = Math.min(bw, bh) * 0.16;
+        segs.push({
+          a: [px - fold, py, zf - 0.02], b: [px, py - fold, zf - 0.02],
+          id: cellId + 7, opts: { color: ACCENT, alpha: 0.9, width: 1.6 },
+        });
+        segs.push({
+          a: [px - fold, py, zf - 0.02], b: [px, py, zf - 0.02],
+          id: cellId + 8, opts: { color: ACCENT, alpha: 0.6, width: 1.2, passes: 1 },
         });
       }
 
@@ -242,6 +285,14 @@ export function shelfGeometry(shelf, place, id) {
       });
     }
   }
+
+  // A soft contact shadow on the floor. Hatching only - no fill - so it darkens
+  // the floor without hiding the grid under it.
+  const sd = D + 0.5;
+  faces.push({
+    p: [[-W / 2, 0.012, 0], [W / 2, 0.012, 0], [W / 2, 0.012, -sd], [-W / 2, 0.012, -sd]],
+    id: id + 40, fill: null, shade: 0.5, shadeAngle: 0.35,
+  });
 
   // shelf number plate on the top rail
   faces.push(...box(-0.45, H, -D * 0.6, 0.45, H + 0.52, -D * 0.6 + 0.08, id + 60, { shadeZ: 0.1 }));

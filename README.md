@@ -20,10 +20,13 @@ database snapshotted into IndexedDB and exportable as a real `.db` file. See
 Press `T` on a box for its ledger: when each week was actually finished, and
 whether you have held the pace you set in week one.
 
-**Stages 1–3 of 4 are built.** The whole walkthrough works, progress is durable,
-and visits are recorded. `E` exports a `.db` plus a `.sql` dump, `I` imports one
-back — worth doing now and then, because clearing site data would take
-IndexedDB with it. Still to come: visual polish (Stage 4).
+Overdue boxes are flagged on the shelf. `H` shows the key map. `E` exports a
+`.db` plus a `.sql` dump and `I` imports one back — worth doing now and then,
+because clearing site data would take IndexedDB with it.
+
+**All four stages are built.** What is left is tuning by eye: none of this has
+been seen in a browser yet, only verified not to crash, overflow or blow the
+frame budget. See the "Still open" section of [SPEC.md](SPEC.md).
 
 Needs node, a C compiler, and [emsdk](https://emscripten.org) for the wasm
 build. `./build.sh native` skips Emscripten and just runs the C self-test.

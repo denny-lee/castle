@@ -6,7 +6,7 @@ const W = 1600, H = 900;
 
 let rec = null;            // the recorder the whole frame draws into
 function newRec(tag) {
-  rec = { strokes: 0, fills: 0, blits: 0, texts: [], pts: [], bad: 0, tag, marks: [] };
+  rec = { strokes: 0, fills: 0, blits: 0, gradients: 0, texts: [], pts: [], bad: 0, tag, marks: [] };
   return rec;
 }
 function makeCtx() {
@@ -49,9 +49,16 @@ function makeCtx() {
     stroke() { rec.strokes++; }, fill() { rec.fills++; },
     fillRect() { rec.fills++; }, clearRect() {},
     drawImage() { rec.blits++; },
-    fillText(t, x, y) { rec.texts.push([t, Math.round(x), Math.round(y)]); note(x, y); },
+    fillText(t, x, y) {
+      // Store the DEVICE position: overlays draw in a translated frame, and a
+      // layout check against raw local coordinates would be meaningless.
+      rec.texts.push([t, Math.round(m[0] * x + m[2] * y + m[4]), Math.round(m[1] * x + m[3] * y + m[5])]);
+      note(x, y);
+    },
     measureText(t) { return { width: t.length * 7.5 }; },
     createPattern() { return {}; },
+    createRadialGradient() { rec.gradients++; return { addColorStop() {} }; },
+    createLinearGradient() { rec.gradients++; return { addColorStop() {} }; },
     createImageData(w, h) { return { data: new Uint8ClampedArray(w * h * 4) }; },
     putImageData() {},
     getContext() { return ctx; },
@@ -133,6 +140,9 @@ if (h0 && h0.perFrame[2] > h0.perFrame[0] * 0.08) {
 const layout = await stub.getRoomLayout(1);
 const room = makeRoom(app, rooms[0], layout, 0);
 const r0 = await drive('room/front-wall', room);
+// Light must be a composite over the cached world, never baked into geometry -
+// otherwise the flicker would invalidate the cache on every frame.
+if (r0 && r0.gradients < 3) bad(`room: expected a lighting pass per frame, saw ${r0.gradients} gradients`);
 if (r0 && r0.perFrame[2] > r0.perFrame[0] * 0.08) {
   bad(`room: still view is not cached (frame 3 still cost ${r0.perFrame[2]} strokes)`);
 }
@@ -188,7 +198,10 @@ for (const [name, scroll] of [['ledger/top', 0], ['ledger/scrolled', 8], ['ledge
   log.push(`${name.padEnd(26)} strokes/frame=[${rec.strokes}]`.padEnd(70)
     + ` texts=${String(rec.texts.length).padStart(3)} onscreen=${(frac * 100).toFixed(0)}% nonfinite=${rec.bad}`);
   if (rec.bad) bad(`${name}: ${rec.bad} non-finite coordinates`);
-  if (frac < 0.95) bad(`${name}: ledger text is drifting off the page (${(frac * 100).toFixed(0)}% on screen)`);
+  const strayText = rec.texts.filter(([, x, y]) => x < 0 || x > W || y < 0 || y > H);
+  if (strayText.length) {
+    bad(`${name}: ${strayText.length} labels fall outside the window, e.g. ${JSON.stringify(strayText[0])}`);
+  }
   if (!rec.texts.some((t) => /late|early|on time/.test(t[0]))) bad(`${name}: no drift column drawn`);
   const perPage = rowsPerPage(H);
   const maxScroll = Math.max(0, long.weeks.length - perPage);
@@ -202,6 +215,38 @@ for (const [name, scroll] of [['ledger/top', 0], ['ledger/scrolled', 8], ['ledge
   }
   if (scroll > maxScroll && weekNumbers[weekNumbers.length - 1] !== long.weeks.length) {
     bad(`${name}: scrolling past the end should pin to the last week, got ${weekNumbers[weekNumbers.length - 1]}`);
+  }
+}
+
+// ---- the key sheet ---------------------------------------------------------
+const { drawHelp } = await import(`${SRC}/help.js`);
+for (const [name, ww, hh] of [
+  ['help/1600x900', 1600, 900],
+  ['help/small', 900, 520],
+  ['help/short', 1000, 420],      // a degenerate window, but it must still fit
+]) {
+  newRec(name);
+  try {
+    drawHelp(shared, ww, hh);
+  } catch (e) {
+    bad(`${name}: ${e.stack.split('\n').slice(0, 2).join(' | ')}`);
+    continue;
+  }
+  const texts = rec.texts.map((t) => t[0]);
+  // Every row must fit the sheet at any sane window size - that is the whole
+  // point of scaling the step to the height available. Measured on text, since
+  // hatching is meant to run past the page edge and be clipped.
+  const pageTop = hh / 2 - Math.min(700, hh * 0.9) / 2;
+  const pageBottom = hh - pageTop;
+  const stray = rec.texts.filter(([, x, y]) => x < 0 || x > ww || y < pageTop - 2 || y > pageBottom + 2);
+  log.push(`${name.padEnd(26)} strokes/frame=[${rec.strokes}]`.padEnd(70)
+    + ` texts=${String(rec.texts.length).padStart(3)} stray=${stray.length} nonfinite=${rec.bad}`);
+  if (rec.bad) bad(`${name}: ${rec.bad} non-finite coordinates`);
+  if (stray.length) {
+    bad(`${name}: ${stray.length} rows fall off the sheet, e.g. ${JSON.stringify(stray[0])}`);
+  }
+  for (const needed of ['CASTLE', 'THE HALL', 'A CARD IN HAND', 'ANYWHERE', '1 – 9', 'T', 'E', 'I']) {
+    if (!texts.includes(needed)) bad(`${name}: the key sheet is missing "${needed}"`);
   }
 }
 

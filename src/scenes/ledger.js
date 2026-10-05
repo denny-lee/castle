@@ -9,20 +9,12 @@
 import {
   PAPER, GRAPHITE, fillPoly, sketchPoly, sketchLine, hatch, label,
 } from '../sketch.js';
+import { dueDateFor, overdueDaysFor, DAY } from '../pace.js';
 
 const ACCENT = '#7a3b2e';
-const DAY = 86400000;
-
 /**
- * Turn a raw ledger into something displayable: planned dates, drift in days,
- * and totals.
- *
- * The planned date of week N is anchored on the FIRST completion: whenever you
- * finished your first card becomes week `firstWeekNo`, and every later week is
- * expected one week after the last. Drift is measured against that. So the
- * anchor week always shows a drift of zero by construction - it is the baseline,
- * not an achievement - and what the column really tells you is whether you have
- * held the pace you set yourself.
+ * Turn a raw ledger into something displayable: due dates, drift in days, the
+ * observed pace, and totals.
  */
 export function computeLedger(raw) {
   if (!raw) return null;
@@ -30,12 +22,9 @@ export function computeLedger(raw) {
 
   const weeks = raw.weeks.map((w) => {
     const done = !!w.doneAt;
-    let plannedAt = null;
+    const plannedAt = dueDateFor(raw.firstDoneAt, raw.firstWeekNo, w.weekNo);
     let driftDays = null;
-    if (anchor) {
-      plannedAt = new Date(anchor.getTime() + (w.weekNo - raw.firstWeekNo) * 7 * DAY);
-      if (done) driftDays = Math.round((new Date(w.doneAt) - plannedAt) / DAY);
-    }
+    if (plannedAt && done) driftDays = Math.round((new Date(w.doneAt) - plannedAt) / DAY);
     return { ...w, done, plannedAt, driftDays };
   });
 
@@ -232,4 +221,4 @@ export function anchorNote(led) {
   return `pace measured from week ${led.firstWeekNo}, finished ${fmtDate(led.firstDoneAt)}`;
 }
 
-export { fmtDuration, fmtDate, fmtDrift };
+export { fmtDuration, fmtDate, fmtDrift, dueDateFor, overdueDaysFor };

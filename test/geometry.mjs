@@ -92,6 +92,55 @@ const stubLed = await stub.getLedger(box.id);
 ok(stubLed.visits === 1 && stubLed.subject === 'Calculus',
    'the stub ledger reports the visit and the subject');
 
+// --- overdue flagging ------------------------------------------------------
+const { dueDateFor, overdueDaysFor } = await import('../src/pace.js');
+const DAYMS = 86400000;
+const anchor = '2026-03-02T09:00:00.000Z';
+const at = (days) => Date.parse(anchor) + days * DAYMS;
+
+ok(dueDateFor(anchor, 1, 1).toISOString() === anchor, 'week 1 is due on the anchor date');
+ok(dueDateFor(anchor, 1, 3) - Date.parse(anchor) === 14 * DAYMS, 'week 3 is due two weeks later');
+ok(dueDateFor(null, 1, 3) === null, 'with no anchor there is no due date');
+
+const waiting = { firstDoneAt: anchor, firstWeekNo: 1, activeWeekNo: 2 };
+ok(overdueDaysFor(waiting, at(6)) === 0, 'a week is not overdue the day before it is due');
+ok(overdueDaysFor(waiting, at(7)) === 0, 'nor on the day itself');
+ok(overdueDaysFor(waiting, at(12)) === 5, 'five days past due reads as 5');
+ok(overdueDaysFor({ firstDoneAt: null, firstWeekNo: null, activeWeekNo: 2 }, at(99)) === 0,
+   'a box with nothing finished is never called late');
+ok(overdueDaysFor({ firstDoneAt: anchor, firstWeekNo: 1, activeWeekNo: null }, at(99)) === 0,
+   'a finished box with no waiting card is never called late');
+
+// The shelf geometry has to pick that up and flag the box in the accent colour.
+const ACCENT = '#7a3b2e';
+const overdueShelf = {
+  id: 1, number: 1, wall: 'front', levels: 4, slots: 3,
+  boxes: [
+    { id: 1, label: 'Late Subject', level: 0, slot: 0, cardCount: 4, doneCount: 1, remaining: 3,
+      activeWeekNo: 2, firstWeekNo: 1, firstDoneAt: '2020-01-01T00:00:00.000Z' },
+    { id: 2, label: 'Fresh Subject', level: 0, slot: 1, cardCount: 4, doneCount: 0, remaining: 4,
+      activeWeekNo: 1, firstWeekNo: null, firstDoneAt: null },
+  ],
+};
+const og = shelfGeometry(overdueShelf, WALL_FRAME.front, 7000);
+const lateText = og.texts.find((t) => t.text === 'Late Subject');
+const freshText = og.texts.find((t) => t.text === 'Fresh Subject');
+ok(lateText && lateText.opts.color === ACCENT, 'an overdue box is labelled in the accent colour');
+ok(freshText && !freshText.opts.color, 'a box with no anchor is not flagged');
+ok(og.segs.some((sg) => sg.opts && sg.opts.color === ACCENT),
+   'the overdue box gets its folded-corner marker');
+
+// The bin shows how much has gone into it.
+const binText = og.texts.find((t) => t.text === '1');
+ok(binText, 'the bin shows a count of the cards filed in it');
+const manyDone = shelfGeometry({
+  ...overdueShelf,
+  boxes: overdueShelf.boxes.map((b) => ({ ...b, doneCount: 20 })),
+}, WALL_FRAME.front, 7100);
+ok(manyDone.texts.some((t) => t.text === '40'), 'the bin count sums every box on the shelf');
+const slipCount = manyDone.segs.filter((sg) => sg.id >= 7100 && sg.opts && sg.opts.width === 1.1).length;
+ok(slipCount === 9, `the visible pile of slips is capped at 9, got ${slipCount}`);
+
 // --- the pace arithmetic, on synthetic data ------------------------------
 // This is the part of the ledger that encodes a judgement rather than stored
 // data, so it is worth pinning down precisely.

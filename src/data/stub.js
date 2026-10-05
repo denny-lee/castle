@@ -158,13 +158,23 @@ function build() {
   return { rooms, boxes, cards, sessions: [], nextSessionId: 1 };
 }
 
+function anchorOf(cs) {
+  const completed = cs.filter((c) => c.doneAt).sort((a, b) => a.doneAt.localeCompare(b.doneAt));
+  return completed.length
+    ? { firstWeekNo: completed[0].weekNo, firstDoneAt: completed[0].doneAt }
+    : { firstWeekNo: null, firstDoneAt: null };
+}
+
 function summarize(bx) {
   const cs = bx.cardIds.map((id) => db.cards.get(id));
   const done = cs.filter((c) => c.doneAt).length;
+  const active = cs.filter((c) => !c.doneAt).sort((a, b) => a.seq - b.seq)[0];
   return {
     id: bx.id, label: bx.label, level: bx.level, slot: bx.slot,
     cardCount: cs.length, doneCount: done,
     remaining: cs.length - done,
+    activeWeekNo: active ? active.weekNo : null,
+    ...anchorOf(cs),
   };
 }
 
@@ -200,6 +210,7 @@ export const stub = {
       subject: bx.label,
       tasks: c.tasks.map((t) => ({ idx: t.idx, text: t.text, done: !!t.done })),
       remaining: cs.length,
+      ...anchorOf(bx.cardIds.map((id) => db.cards.get(id))),
     };
   },
 

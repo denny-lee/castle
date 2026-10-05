@@ -22,12 +22,18 @@ to wasm as the backend, persistent storage, exportable to a real `.db` file.
 | 1 | Sketch renderer, approach, hall, rooms, shelves, cards, Done flow — on fake data | **done** |
 | 2 | C + SQLite → wasm, IndexedDB snapshots, export / import | **done** |
 | 3 | Session tracking and the timeline ledger | **done** |
-| 4 | Visual polish | not started |
+| 4 | Lighting, overdue flags, the filling bin, the key sheet | **done** |
 
 Progress is durable: SQLite runs in wasm, and the database is snapshotted into
 IndexedDB after every completion. Exported `.db` files open in the `sqlite3`
 CLI. `T` on any box opens its ledger — when each week was finished, and whether
-you have held the pace you set.
+you have held the pace you set. Overdue boxes are flagged on the shelf, and `H`
+puts the whole key map on a sheet of paper.
+
+Stage 4 covered the parts of "polish" that are data-driven or structural. The
+purely visual choices — proportions, line weights, the pacing of the opening
+walk, how hard the torch should flicker — have never been looked at in a
+browser, only verified not to crash or overflow. They will want tuning by eye.
 
 ---
 
@@ -77,6 +83,7 @@ Build outputs: `src/data/castle.wasm` (584KB) and `castle.js` (17KB of glue).
 | Ledger | `T` / `ESC` | close it |
 | anywhere | `E` | export: download both a `.db` and a `.sql` dump |
 | anywhere | `I` | import a `.db` file, replacing everything |
+| anywhere | `H` / `?` | the key sheet; it swallows every other key while open |
 
 The one genuine conflict in the requirements is that `↑ ↓` both leaves the room
 and moves between shelf levels. Resolved by making shelf selection a **mode**:
@@ -97,6 +104,9 @@ src/
   sketch.js              pencil-sketch primitives
   camera.js              perspective projection, painter sort, geometry builders
   cache.js               offscreen cache for the motionless view
+  light.js               vignette, torch flicker, daylight - composited, never baked
+  pace.js                the due-date rule, shared by the geometry and the ledger
+  help.js                the key sheet
   transfer.js            export downloads and the import file picker
   geom/castle.js         exterior: towers, curtain walls, gatehouse, donjon
   geom/room.js           hall ring, room shell, shelves and boxes
@@ -181,8 +191,15 @@ at 60fps, both checked by `test/render.mjs`:
   overlay and the HUD draw live on top, so they stay responsive. Only the brief
   turns between walls pay for a full redraw.
 
-Measured: a full room redraw ≈ 3.4k strokes, a still room frame ≈ 0, the
+Measured: a full room redraw ≈ 3.7k strokes, a still room frame ≈ 0, the
 approach ≈ 1.9k every frame (it moves constantly, so it is never cached).
+
+**Light is composited, never baked** (`light.js`). This is forced by the cache:
+a flickering torch that modulated face shading would invalidate the cached world
+on every single frame and throw the whole budget away. As a full-screen gradient
+drawn over the blit it costs one fill and stays live. The flicker is summed
+sines, not random, so it is smooth and reproducible. `test/render.mjs` asserts
+both that the lighting pass happens and that still frames still cost ~0 strokes.
 
 ### 4.4 Scene stack
 
@@ -340,10 +357,22 @@ an in-memory store.
 
 ## 7. Remaining stages
 
-### Stage 4 — polish
+### Still open
 
-Hatched shading and cast shadows, torch flicker, overdue cards flagged from
-`week_no`, richer bin behaviour, and whatever walking around reveals as missing.
+Nothing in the staged plan. What remains is the work that needs eyes on it:
+
+- **Tuning by eye.** Nothing has ever been seen in a browser. Most likely to be
+  wrong: the contact shadows under the shelves (hatching only, no fill, and the
+  painter sort draws them *over* the shelf base), torch flicker depth, the
+  11-second pacing of the opening walk, and line weights at small sizes.
+- **Browser-only code paths remain unverified**: `idb.js` persisting across a
+  real reload, and the download / file-picker flows in `transfer.js`. Everything
+  else is covered by the node suites.
+- **Creating rooms, shelves and boxes from inside the castle** is still out of
+  scope; the curriculum lives in `stub.js` and is rebuilt with `./build.sh`.
+- **Real start dates per subject** would replace the first-completion anchor
+  (6.7) with something that could measure lateness from week one. That is a
+  schema change and a deliberate design decision, not a tweak.
 
 ---
 

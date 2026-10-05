@@ -8,6 +8,8 @@ import {
 } from '../geom/room.js';
 import { makeViewCache, camKey } from '../cache.js';
 import { computeLedger, drawLedger, rowsPerPage } from './ledger.js';
+import { overdueDaysFor } from '../pace.js';
+import { torchlight } from '../light.js';
 
 const ACCENT = '#7a3b2e';
 
@@ -54,6 +56,7 @@ export function makeRoom(app, room, layout, hallIndex) {
   let ledger = null;              // the ledger page, while it is open
   let ledgerScroll = 0;
   let lastHeight = 900;           // for ledger paging; set on every render
+  let clock = 0;                  // seconds in the room, for the torch flicker
 
   function say(msg) { flash = msg; flashT = 2.4; }
 
@@ -161,6 +164,7 @@ export function makeRoom(app, room, layout, hallIndex) {
     get hallIndex() { return hallIndex; },
 
     update(dt) {
+      clock += dt;
       const k = 1 - Math.exp(-dt * 8);
       cam.yaw += (targetYaw - cam.yaw) * k;
       if (toss) { toss.t += dt / 0.6; if (toss.t >= 1) toss = null; }
@@ -262,6 +266,10 @@ export function makeRoom(app, room, layout, hallIndex) {
 
       if (toss) drawToss(ctx, v, w, h, toss);
 
+      // Light goes on over the cached world, never into it - see light.js.
+      // Overlays are drawn after, so paper in your hands stays crisp.
+      torchlight(ctx, w, h, clock);
+
       label(ctx, room.name, 24, 30, 22, { align: 'left', weight: 'bold', alpha: 0.6 });
 
       // The ledger covers the card while it is open: two sheets of paper
@@ -295,6 +303,7 @@ function drawToss(ctx, v, w, h, toss) {
 }
 
 function drawCard(ctx, w, h, card) {
+  const overdue = overdueDaysFor(card);
   const cw = Math.min(520, w * 0.62);
   const ch = Math.min(620, h * 0.76);
   const cx = w / 2, cy = h / 2;
@@ -338,6 +347,19 @@ function drawCard(ctx, w, h, card) {
   label(ctx, `${card.remaining} card${card.remaining === 1 ? '' : 's'} left in this box`,
     left, y, 13, { align: 'left', alpha: 0.5 });
   label(ctx, 'D  done', right, y, 13, { align: 'right', alpha: 0.5 });
+
+  // An overdue stamp, angled across the corner like something pressed on later.
+  if (overdue > 0) {
+    ctx.save();
+    ctx.translate(cw * 0.22, -ch * 0.3);
+    ctx.rotate(-0.17);
+    const sw = 168, sh = 42;
+    const bounds = [[-sw / 2, -sh / 2], [sw / 2, -sh / 2], [sw / 2, sh / 2], [-sw / 2, sh / 2]];
+    sketchPoly(ctx, bounds, 8400, { color: ACCENT, alpha: 0.75, width: 2, passes: 2 });
+    label(ctx, `${overdue} DAY${overdue === 1 ? '' : 'S'} LATE`, 0, 0, 17,
+      { color: ACCENT, alpha: 0.85, weight: 'bold' });
+    ctx.restore();
+  }
   ctx.restore();
 }
 

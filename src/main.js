@@ -4,6 +4,7 @@
 import api, { backendName } from './data/api.js';
 import { installInput } from './input.js';
 import { exportBoth, importFile } from './transfer.js';
+import { drawHelp } from './help.js';
 import { PAPER, label, sketchLine } from './sketch.js';
 import { drawDark, FADE_OUT, FADE_IN } from './scenes/fade.js';
 import { makeApproach } from './scenes/approach.js';
@@ -38,6 +39,7 @@ let status = '';
 let prompt = null;
 let flash = '';
 let flashUntil = 0;
+let helpOpen = false;
 
 function say(msg) {
   flash = msg;
@@ -101,6 +103,13 @@ async function handleTransfer(action) {
 }
 
 installInput((action) => {
+  if (action === 'help') { helpOpen = !helpOpen; return; }
+  // While the key sheet is up it swallows everything, so a stray arrow does not
+  // move you somewhere you cannot see.
+  if (helpOpen) {
+    if (action === 'back') helpOpen = false;
+    return;
+  }
   if (action === 'export' || action === 'import') { handleTransfer(action); return; }
   if (phase !== 'out' && phase !== 'loading' && scene) scene.action(action);
 });
@@ -123,6 +132,9 @@ function drawHud(w, h) {
     ctx.globalAlpha = 0.9;
     label(ctx, status, w / 2, h - 24, 14, { alpha: 0.55 });
     ctx.restore();
+  }
+  if (!helpOpen && !prompt) {
+    label(ctx, 'H  keys', w - 20, h - 24, 12, { align: 'right', alpha: 0.35 });
   }
   if (prompt) {
     const pw = Math.min(w - 48, 720);
@@ -175,7 +187,7 @@ function frame(now) {
     if (phaseT >= FADE_IN) phase = 'hold';
   }
 
-  if (scene && phase !== 'out' && phase !== 'loading') scene.update(dt);
+  if (scene && phase !== 'out' && phase !== 'loading') scene.update(helpOpen ? 0 : dt);
 
   if (phase === 'loading') {
     ctx.fillStyle = '#17150f';
@@ -183,6 +195,7 @@ function frame(now) {
   } else if (scene) {
     scene.render(ctx, W, H);
     drawHud(W, H);
+    if (helpOpen) drawHelp(ctx, W, H);
     if (phase === 'out') drawDark(ctx, W, H, phaseT / FADE_OUT);
     if (phase === 'in') drawDark(ctx, W, H, 1 - phaseT / FADE_IN);
   } else {

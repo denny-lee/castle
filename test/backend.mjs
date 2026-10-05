@@ -84,6 +84,25 @@ ok(timeline.length === 1 && timeline[0].weekNo === 1 && /^\d{4}-\d{2}-\d{2}T/.te
 const refreshed = (await api.getRoomLayout(1)).flatMap((s) => s.boxes).find((b) => b.id === calculus.id);
 ok(refreshed.doneCount === 1 && refreshed.remaining === 3, 'the layout reflects the completion');
 
+// ---- the pace anchor rides along, for overdue flagging ---------------------
+const paced = (await api.getRoomLayout(1)).flatMap((s) => s.boxes).find((b) => b.id === calculus.id);
+ok(paced.activeWeekNo === 2 && paced.firstWeekNo === 1 && typeof paced.firstDoneAt === 'string',
+  'a worked box carries its active week and pace anchor');
+const untouchedBox = (await api.getRoomLayout(1)).flatMap((s) => s.boxes)
+  .find((b) => b.label === 'Discrete Math');
+ok(untouchedBox.activeWeekNo === 1 && untouchedBox.firstDoneAt === null,
+  'an untouched box reports week 1 waiting and no anchor');
+
+const { overdueDaysFor } = await import('../src/pace.js');
+ok(overdueDaysFor(untouchedBox, Date.now() + 365 * 86400000) === 0,
+  'a box with nothing finished is never overdue, however long it sits');
+ok(overdueDaysFor(paced, Date.parse(paced.firstDoneAt) + 30 * 86400000) === 23,
+  'a worked box goes overdue 7 days after its anchor');
+
+const pacedCard = await api.getTopCard(calculus.id);
+ok(pacedCard.firstWeekNo === 1 && typeof pacedCard.firstDoneAt === 'string',
+  'the card carries the anchor so it can stamp itself late');
+
 // ---- sessions and the ledger ----------------------------------------------
 const { id: visit } = await api.startSession(calculus.id, card.id);
 ok(typeof visit === 'number' && visit > 0, `startSession returns a session id (${visit})`);

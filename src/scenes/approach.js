@@ -4,6 +4,7 @@ import { makeCamera, beginView, renderScene, DEG } from '../camera.js';
 import { PAPER, paperGrain, label, sketchLine } from '../sketch.js';
 import { castleGeometry, approachGround, CASTLE } from '../geom/castle.js';
 import { easeInOut } from './fade.js';
+import { daylight } from '../light.js';
 
 const DURATION = 11.0;
 
@@ -61,6 +62,7 @@ export function makeApproach(app) {
 
       const v = beginView(cam, w, h);
       renderScene(ctx, v, geometry());
+      daylight(ctx, w, h);
       paperGrain(ctx, w, h);
 
       // Title card, fading out as the walk begins.

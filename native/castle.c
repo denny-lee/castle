@@ -230,7 +230,11 @@ static void emit_tasks(Buf *b, sqlite3_int64 card_id) {
 static void emit_top_card(Buf *b, int box_id) {
   static const char *SQL =
     "SELECT c.id, c.box_id, c.seq, c.week_no, c.title, b.label,"
-    " (SELECT COUNT(*) FROM cards c2 WHERE c2.box_id = c.box_id AND c2.done_at IS NULL)"
+    " (SELECT COUNT(*) FROM cards c2 WHERE c2.box_id = c.box_id AND c2.done_at IS NULL),"
+    " (SELECT week_no FROM cards c3 WHERE c3.box_id = c.box_id AND c3.done_at IS NOT NULL"
+    "   ORDER BY c3.done_at LIMIT 1),"
+    " (SELECT done_at FROM cards c4 WHERE c4.box_id = c.box_id AND c4.done_at IS NOT NULL"
+    "   ORDER BY c4.done_at LIMIT 1)"
     " FROM cards c JOIN boxes b ON b.id = c.box_id"
     " WHERE c.box_id = ?1 AND c.done_at IS NULL"
     " ORDER BY c.seq LIMIT 1";
@@ -263,6 +267,11 @@ static void emit_top_card(Buf *b, int box_id) {
   buf_col_str(b, st, 5);
   buf_str(b, ",\"remaining\":");
   buf_int(b, sqlite3_column_int(st, 6));
+  buf_str(b, ",\"firstWeekNo\":");
+  if (sqlite3_column_type(st, 7) == SQLITE_NULL) buf_str(b, "null");
+  else buf_int(b, sqlite3_column_int(st, 7));
+  buf_str(b, ",\"firstDoneAt\":");
+  buf_col_str(b, st, 8);
   buf_str(b, ",\"tasks\":");
   sqlite3_finalize(st);
   emit_tasks(b, card_id);
@@ -288,10 +297,19 @@ static void emit_rooms(Buf *b) {
 }
 
 static void emit_boxes(Buf *b, sqlite3_int64 shelf_id) {
+  /* The last three columns are the pace anchor (first completion) and the week
+   * now waiting. The room needs them to flag an overdue box without asking for
+   * a full ledger per box; the arithmetic itself stays in JS. */
   static const char *SQL =
     "SELECT b.id, b.label, b.level, b.slot,"
     " (SELECT COUNT(*) FROM cards c WHERE c.box_id = b.id),"
-    " (SELECT COUNT(*) FROM cards c WHERE c.box_id = b.id AND c.done_at IS NOT NULL)"
+    " (SELECT COUNT(*) FROM cards c WHERE c.box_id = b.id AND c.done_at IS NOT NULL),"
+    " (SELECT week_no FROM cards c WHERE c.box_id = b.id AND c.done_at IS NULL"
+    "   ORDER BY c.seq LIMIT 1),"
+    " (SELECT week_no FROM cards c WHERE c.box_id = b.id AND c.done_at IS NOT NULL"
+    "   ORDER BY c.done_at LIMIT 1),"
+    " (SELECT done_at FROM cards c WHERE c.box_id = b.id AND c.done_at IS NOT NULL"
+    "   ORDER BY c.done_at LIMIT 1)"
     " FROM boxes b WHERE b.shelf_id = ?1 ORDER BY b.level, b.slot";
 
   sqlite3_stmt *st = NULL;
@@ -316,6 +334,14 @@ static void emit_boxes(Buf *b, sqlite3_int64 shelf_id) {
     buf_int(b, done);
     buf_str(b, ",\"remaining\":");
     buf_int(b, total - done);
+    buf_str(b, ",\"activeWeekNo\":");
+    if (sqlite3_column_type(st, 6) == SQLITE_NULL) buf_str(b, "null");
+    else buf_int(b, sqlite3_column_int(st, 6));
+    buf_str(b, ",\"firstWeekNo\":");
+    if (sqlite3_column_type(st, 7) == SQLITE_NULL) buf_str(b, "null");
+    else buf_int(b, sqlite3_column_int(st, 7));
+    buf_str(b, ",\"firstDoneAt\":");
+    buf_col_str(b, st, 8);
     buf_str(b, "}");
   }
   buf_str(b, "]");
@@ -758,6 +784,19 @@ int main(void) {
              && strstr(led2, "\"seconds\":1500"),
         "an abandoned visit is counted but contributes no time");
   castle_free(led2);
+
+  /* The pace anchor rides along with boxes and cards, for overdue flagging. */
+  char *lay2 = castle_query("layout", 1, 0, NULL);
+  CHECK(lay2 && strstr(lay2, "\"activeWeekNo\":2") && strstr(lay2, "\"firstWeekNo\":1"),
+        "boxes carry the active week and the pace anchor");
+  CHECK(lay2 && strstr(lay2, "\"activeWeekNo\":1") && strstr(lay2, "\"firstDoneAt\":null"),
+        "an untouched box reports week 1 and no anchor");
+  castle_free(lay2);
+
+  char *card2 = castle_query("topCard", 1, 0, NULL);
+  CHECK(card2 && strstr(card2, "\"firstWeekNo\":1") && strstr(card2, "2026-02-01"),
+        "the top card carries the anchor too");
+  castle_free(card2);
 
   char *bad = castle_query("nonsense", 0, 0, NULL);
   CHECK(bad && strstr(bad, "unknown operation"), "an unknown operation is reported, not crashed on");
