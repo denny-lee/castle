@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Castle</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #e8e4d8;
+  }
+  #stage { display: block; width: 100vw; height: 100vh; cursor: none; }
+  #boot {
+    position: fixed; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    font: 16px/1.6 Georgia, serif; color: #5a5348;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="boot">opening the gates&hellip;</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

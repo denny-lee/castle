@@ -1,0 +1,8 @@
+# Build outputs
+build/
+src/data/castle.js
+src/data/castle.wasm
+
+# Generated from src/data/stub.js by build.sh - never edit by hand
+native/schema.sql
+native/schema_sql.h
