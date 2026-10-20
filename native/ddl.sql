@@ -12,7 +12,8 @@ CREATE TABLE rooms (
   id   INTEGER PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
-  sort INTEGER NOT NULL
+  sort INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'library' CHECK (kind IN ('library', 'club'))
 );
 
 CREATE TABLE shelves (
@@ -67,11 +68,30 @@ CREATE TABLE sessions (
   ended_at   TEXT
 );
 
+-- A club room has a playlist instead of shelves. `bars` is base64 of
+-- frames*bands bytes (0..255 per bar, frame-major); `lyrics` is JSON
+-- [{"t":ms,"text":"..."}] sorted by t. Nothing is played: the data only drives
+-- the screen. Produced by tools/add-song.mjs.
+CREATE TABLE songs (
+  id          INTEGER PRIMARY KEY,
+  room_id     INTEGER NOT NULL REFERENCES rooms(id),
+  seq         INTEGER NOT NULL,
+  title       TEXT NOT NULL,
+  artist      TEXT,
+  duration_ms INTEGER NOT NULL,
+  fps         INTEGER NOT NULL,
+  bands       INTEGER NOT NULL,
+  bars        TEXT NOT NULL,
+  lyrics      TEXT NOT NULL,
+  UNIQUE (room_id, seq)
+);
+
 CREATE INDEX cards_box_seq ON cards(box_id, seq);
 CREATE INDEX cards_box_open ON cards(box_id, seq) WHERE done_at IS NULL;
 CREATE INDEX tasks_card ON tasks(card_id, idx);
 CREATE INDEX boxes_shelf ON boxes(shelf_id);
 CREATE INDEX shelves_room ON shelves(room_id);
 CREATE INDEX sessions_box ON sessions(box_id, started_at);
+CREATE INDEX songs_room ON songs(room_id, seq);
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '1');
+INSERT INTO meta (key, value) VALUES ('schema_version', '2');

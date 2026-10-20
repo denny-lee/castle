@@ -33,8 +33,8 @@ ok([...cg.segs, ...ag.segs].every(s => s.a.every(Number.isFinite) && s.b.every(N
 // --- shelves land on the right walls, in front of the viewer --------------
 await stub.init();
 const rooms = await stub.listRooms();
-ok(rooms.length === 5 && rooms.map(r=>r.code).join(',') === 'SKILL,INTEREST,IMAGINE,APPETENCE,WORKSHOP',
-   'five rooms, in order: ' + rooms.map(r=>r.code).join(' '));
+ok(rooms.length === 6 && rooms.map(r=>r.code).join(',') === 'SKILL,INTEREST,IMAGINE,APPETENCE,WORKSHOP,CLUB',
+   'six rooms, in order: ' + rooms.map(r=>r.code).join(' '));
 const layout = await stub.getRoomLayout(1);
 ok(layout.length === 9, '9 shelves in SKILL');
 ok(layout.filter(s=>s.wall==='front').length===3 && layout.filter(s=>s.wall==='left').length===3

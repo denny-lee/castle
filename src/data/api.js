@@ -1,8 +1,11 @@
 // The one data interface the UI is allowed to know about.
 //
 //   init()
-//   listRooms()            -> [{id, code, name}]
+//   listRooms()            -> [{id, code, name, kind: 'library' | 'club'}]
 //   getRoomLayout(roomId)  -> [{id, number, wall, levels, slots, boxes:[...]}]
+//   listSongs(roomId)      -> [{id, seq, title, artist, durationMs}]       (club rooms)
+//   getSong(songId)        -> {id, seq, title, artist, durationMs, fps, bands,
+//                              bars: Uint8Array(frames*bands), lyrics:[{t, text}]} | null
 //   getTopCard(boxId)      -> {id, weekNo, title, subject, tasks:[{text}]} | null
 //   markCardDone(cardId)   -> {nextCard}
 //   getTimeline(boxId)     -> [{cardId, weekNo, doneAt}]

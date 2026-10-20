@@ -17,6 +17,11 @@ JS + canvas front end; C + SQLite compiled to wasm as the backend, with the
 database snapshotted into IndexedDB and exportable as a real `.db` file. See
 [SPEC.md](SPEC.md) for the design, the controls, and the staged plan.
 
+The **CLUB** door leads to a different kind of room: a screen of bouncing spectrum
+bars with the lyrics rolling up, fed from a playlist in the database (no sound).
+Add songs with `node tools/add-song.mjs track.mp3 --lrc track.lrc` — see
+[SPEC.md](SPEC.md) §7.
+
 Press `T` on a box for its ledger: when each week was actually finished, and
 whether you have held the pace you set in week one.
 

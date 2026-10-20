@@ -6,8 +6,11 @@
 // What this adds is everything between: ccall marshalling, UTF-8 strings, the
 // serialise round trip through the wasm heap, and the persistence sequencing.
 
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { makeWasmBackend } from '../src/data/wasm.js';
+import { analyze } from '../tools/spectrum.mjs';
+import { songSql } from '../tools/songsql.mjs';
 
 const MODULE = new URL('../build/castle-node.mjs', import.meta.url);
 if (!existsSync(MODULE)) {
@@ -37,7 +40,7 @@ ok(saved.writes === 1, 'a first run is snapshotted immediately');
 ok(api.storageWarning === null, 'no storage warning on a healthy run');
 
 const rooms = await api.listRooms();
-ok(rooms.length === 5 && rooms.map((r) => r.code).join(' ') === 'SKILL INTEREST IMAGINE APPETENCE WORKSHOP',
+ok(rooms.length === 6 && rooms.map((r) => r.code).join(" ") === "SKILL INTEREST IMAGINE APPETENCE WORKSHOP CLUB",
   'rooms come back in order: ' + rooms.map((r) => r.code).join(' '));
 
 const layout = await api.getRoomLayout(1);
@@ -136,6 +139,15 @@ ok(led.paceDays === null, 'one completion is not enough to measure a pace');
 ok(computeLedger(await api.getLedger(allBoxes.find((b) => b.label === 'Discrete Math').id)).anchored === false,
   'an untouched box reports no anchor');
 
+// ---- the club ---------------------------------------------------------------
+{
+  const club = rooms.find((r) => r.code === 'CLUB');
+  ok(club && club.kind === 'club' && rooms.filter((r) => r.kind === 'library').length === 5,
+    'CLUB is a club; the other five rooms are libraries');
+  ok((await api.listSongs(club.id)).length === 0, 'the club starts with an empty playlist');
+  ok((await api.getSong(1)) === null, 'asking for a song that is not there gives null');
+}
+
 // ---- export ----------------------------------------------------------------
 const bytes = await api.exportDb();
 ok(bytes instanceof Uint8Array && bytes.length > 4096, `exportDb gives ${bytes.length} bytes`);
@@ -176,6 +188,36 @@ try { await second.importDb(new Uint8Array(1024)); } catch (e) { importThrew = e
 ok(importThrew && /does not look like a SQLite/.test(importThrew.message),
   'importing a non-database is refused');
 
+// A song, end to end: the SQL tools/add-song.mjs writes, applied with the
+// sqlite3 CLI to an exported database, then imported back and read through the
+// same API the club scene uses.
+if (spawnSync('sqlite3', ['-version']).status === 0) {
+  const SR = 22050;
+  const tone = Float32Array.from({ length: SR * 2 }, (_, i) => 0.5 * Math.sin((2 * Math.PI * 1000 * i) / SR));
+  const spec = analyze(tone, SR, { fps: 24, bands: 16 });
+  const lyrics = [{ t: 500, text: 'Привет, “world”' }, { t: 1500, text: "it's a line" }];
+  const sql = songSql({ title: "Night 'Owl'", artist: 'Тест', durationMs: 2000, spec, lyrics });
+  const withSong = new URL('../build/song-check.db', import.meta.url);
+  writeFileSync(withSong, await second.exportDb());
+  const run = spawnSync('sqlite3', [withSong.pathname], { input: sql });
+  ok(run.status === 0, 'the SQL from add-song applies to an exported database ' + (run.stderr || ''));
+
+  await second.importDb(new Uint8Array(readFileSync(withSong)));
+  const club = (await second.listRooms()).find((r) => r.code === 'CLUB');
+  const list = await second.listSongs(club.id);
+  ok(list.length === 1 && list[0].title === "Night 'Owl'" && list[0].artist === 'Тест' && list[0].durationMs === 2000,
+    'the playlist lists the song, quotes and Cyrillic intact');
+  ok(!('bars' in list[0]), 'and leaves the bulky bars out of the list');
+  const song = await second.getSong(list[0].id);
+  ok(song.bars instanceof Uint8Array && song.bars.length === spec.frames * 16
+    && song.bars.every((v, i) => v === spec.data[i]), 'the bars come back byte for byte');
+  ok(song.fps === 24 && song.bands === 16 && song.lyrics.length === 2 && song.lyrics[0].text === 'Привет, “world”'
+    && song.lyrics[1].t === 1500, 'fps, bands and lyrics come back decoded');
+  ok((await second.exportSql()).includes('INSERT OR REPLACE INTO songs'), 'the .sql dump includes songs');
+} else {
+  console.log('skip  song round trip: no sqlite3 on PATH');
+}
+
 // A storage failure must be reported, not swallowed.
 const broken = makeWasmBackend({
   createModule,
@@ -187,7 +229,7 @@ const broken = makeWasmBackend({
 await broken.init();
 ok(broken.storageWarning && broken.storageWarning.includes('quota exceeded'),
   'a failing store surfaces a warning: ' + broken.storageWarning);
-ok((await broken.listRooms()).length === 5, 'and the session still works regardless');
+ok((await broken.listRooms()).length === 6, 'and the session still works regardless');
 
 console.log(fail ? `\n${fail} FAILURES` : '\nall wasm boundary checks passed');
 process.exit(fail ? 1 : 0);

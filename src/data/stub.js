@@ -116,11 +116,32 @@ const ROOM_SEED = [
       ] },
     ],
   },
+  // A club has a playlist, not shelves. Songs are not seeded: their bar data
+  // is far too big for a C string literal, so they arrive via tools/add-song.mjs.
+  { code: 'CLUB', name: 'CLUB', kind: 'club', subjects: [] },
 ];
 
 const WALL_OF_SHELF = { 1: 'front', 2: 'front', 3: 'front', 4: 'left', 5: 'left', 6: 'left', 7: 'right', 8: 'right', 9: 'right' };
 
 let db = null;
+
+const DEMO = { durationMs: 12000, fps: 24, bands: 32 };
+
+/** Sine-driven bars and a few timed lines, in the same shape wasm.js returns. */
+function demoSong() {
+  const { durationMs, fps, bands } = DEMO;
+  const frames = Math.ceil((durationMs / 1000) * fps);
+  const bars = new Uint8Array(frames * bands);
+  for (let f = 0; f < frames; f++) {
+    for (let b = 0; b < bands; b++) {
+      const v = 0.5 + 0.5 * Math.sin(f * 0.21 + b * 0.37) * Math.cos(f * 0.05 - b * 0.11);
+      bars[f * bands + b] = Math.round(255 * v * (1 - (b / bands) * 0.5));
+    }
+  }
+  const lyrics = ['Walk up to the gate', 'Step into the hall', 'Pick a room', 'Take a box off the shelf',
+    'Read the top card', 'And turn the music up'].map((text, i) => ({ t: 1000 + i * 1800, text }));
+  return { durationMs, fps, bands, bars, lyrics };
+}
 
 function build() {
   const rooms = [];
@@ -129,8 +150,8 @@ function build() {
   let boxId = 1, cardId = 1;
 
   ROOM_SEED.forEach((rs, ri) => {
-    const room = { id: ri + 1, code: rs.code, name: rs.name, sort: ri, shelves: [] };
-    for (let n = 1; n <= 9; n++) {
+    const room = { id: ri + 1, code: rs.code, name: rs.name, sort: ri, kind: rs.kind || 'library', shelves: [] };
+    for (let n = 1; n <= (room.kind === 'club' ? 0 : 9); n++) {
       room.shelves.push({
         id: room.id * 100 + n, number: n, wall: WALL_OF_SHELF[n],
         levels: LEVELS, slots: SLOTS, boxes: [],
@@ -184,7 +205,18 @@ export const stub = {
   },
 
   async listRooms() {
-    return db.rooms.map((r) => ({ id: r.id, code: r.code, name: r.name }));
+    return db.rooms.map((r) => ({ id: r.id, code: r.code, name: r.name, kind: r.kind }));
+  },
+
+  // A tiny synthetic song, so ?stub and the tests have something to draw.
+  async listSongs(roomId) {
+    return db.rooms.some((r) => r.id === roomId && r.kind === 'club')
+      ? [{ id: 1, seq: 0, title: 'Demo Tone', artist: 'Castle', durationMs: DEMO.durationMs }]
+      : [];
+  },
+
+  async getSong(songId) {
+    return songId === 1 ? { id: 1, seq: 0, title: 'Demo Tone', artist: 'Castle', ...demoSong() } : null;
   },
 
   async getRoomLayout(roomId) {

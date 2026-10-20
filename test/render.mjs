@@ -81,6 +81,7 @@ const { stub } = await import(`${SRC}/data/stub.js`);
 const { makeApproach } = await import(`${SRC}/scenes/approach.js`);
 const { makeHall } = await import(`${SRC}/scenes/hall.js`);
 const { makeRoom } = await import(`${SRC}/scenes/room.js`);
+const { makeClub, lyricPosition } = await import(`${SRC}/scenes/club.js`);
 
 await stub.init();
 const rooms = await stub.listRooms();
@@ -163,6 +164,52 @@ await drive('room/post-refresh', room, { frames: 3 });
 const rc2 = await drive('room/next-card', room, { actions: ['open'] });
 if (rc2 && !rc2.texts.some((t) => /Л-Я/.test(t[0]))) bad('room: week 2 card did not surface');
 await drive('room/bin-cell', room, { actions: ['shelf2', 'down', 'down', 'down', 'right', 'right', 'open'] });
+
+// ---- the club ---------------------------------------------------------------
+{
+  const clubRoom = rooms.find((r) => r.kind === 'club');
+  const songs = await stub.listSongs(clubRoom.id);
+  const club = makeClub(app, clubRoom, songs, 5);
+  await new Promise((r) => setTimeout(r, 0));          // let the song load
+  const c0 = await drive('club/playing', club, { frames: 4, dt: 0.5 });
+  if (c0 && !c0.texts.some((t) => t[0] === 'Demo Tone — Castle')) bad('club: the song title is not on the screen');
+  if (c0 && !c0.texts.some((t) => t[0] === 'CLUB')) bad('club: the CLUB sign is not drawn');
+  // The room is cached; only the screen should cost strokes once it is warm.
+  if (c0 && c0.perFrame[2] > c0.perFrame[0] * 0.2) {
+    bad(`club: the world is not cached (frame 3 cost ${c0.perFrame[2]} of ${c0.perFrame[0]} strokes)`);
+  }
+  if (c0 && c0.perFrame[2] > 200) bad(`club: a live frame costs ${c0.perFrame[2]} strokes - too many for 60fps`);
+  // Lyrics must roll: at 2.9s the demo is on line 2, and the neighbours are drawn.
+  if (c0 && !c0.texts.some((t) => t[0] === 'Pick a room')) bad('club: the current lyric is not drawn');
+
+  const heights = [];
+  for (const t of [0.3, 0.6, 0.9]) {
+    newRec('club/bars');
+    club.update(t);
+    club.render(shared, W, H);
+    heights.push(Math.round(rec.pts.reduce((n, p) => n + p[1], 0)));   // where every stroke ended up
+  }
+  if (new Set(heights).size < 2) bad('club: the bars do not move over time');
+
+  await drive('club/paused', club, { actions: ['open'], frames: 2, dt: 0.5 });
+  await drive('club/next-song', club, { actions: ['right'], frames: 2 });
+  let left = null;
+  const clubApp = { ...app, go(name, p) { left = [name, p]; } };
+  const exitClub = makeClub(clubApp, clubRoom, songs, 5);
+  exitClub.action('up');
+  if (!left || left[0] !== 'hall' || left[1].hallIndex !== 5) bad('club: leaving does not return to the CLUB door');
+
+  const empty = makeClub(app, clubRoom, [], 5);
+  const e0 = await drive('club/no-songs', empty, { minStrokes: 0 });
+  if (e0 && !e0.texts.some((t) => /NO SONGS/.test(t[0]))) bad('club: an empty playlist does not say so');
+
+  const lines = [{ t: 1000, text: 'a' }, { t: 3000, text: 'b' }, { t: 5000, text: 'c' }];
+  const p = (ms) => lyricPosition(lines, ms);
+  if (!(p(0) === -1 && p(1000) === 0 && p(2000) === 0 && p(5000) === 2 && p(9000) === 2)) {
+    bad('club: lyric position is wrong at the line boundaries');
+  }
+  if (!(p(2800) > 0 && p(2800) < 1 && p(2700) < p(2800))) bad('club: lyrics do not ease into the next line');
+}
 
 // ---- the ledger page -------------------------------------------------------
 const lg = await drive('room/ledger', room, { actions: ['shelf2', 'timeline'] });

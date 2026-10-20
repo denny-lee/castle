@@ -23,6 +23,7 @@ to wasm as the backend, persistent storage, exportable to a real `.db` file.
 | 2 | C + SQLite → wasm, IndexedDB snapshots, export / import | **done** |
 | 3 | Session tracking and the timeline ledger | **done** |
 | 4 | Lighting, overdue flags, the filling bin, the key sheet | **done** |
+| 5 | The Club: a screen with a spectrum and rolling lyrics, a playlist in the db | **done** |
 
 Progress is durable: SQLite runs in wasm, and the database is snapshotted into
 IndexedDB after every completion. Exported `.db` files open in the `sqlite3`
@@ -71,6 +72,9 @@ Build outputs: `src/data/castle.wasm` (584KB) and `castle.js` (17KB of glue).
 | Hall | `← →` | swing between category doors |
 | Hall | `↑` | enter the room |
 | Room | `← →` | turn 90° (front → left → back → right) |
+| Club | `← →` | previous / next song |
+| Club | `SPACE` | pause / resume the screen |
+| Club | `↑ ↓` / `ESC` | leave the room |
 | Room | `1`–`9` | take a shelf; the view turns to its wall |
 | Room | `↑ ↓` | leave the room (no shelf held) |
 | Room | `↑ ↓` | change shelf level (shelf held) |
@@ -113,6 +117,8 @@ src/
   scenes/approach.js     the opening walk to the gate
   scenes/hall.js         the door carousel
   scenes/room.js         walls, shelf selection, card view, Done flow, visits
+  geom/club.js           club shell: the screen, speakers, dance floor; screenPoint()
+  scenes/club.js         the screen: spectrum bars, rolling lyrics, playlist
   scenes/ledger.js       the pace arithmetic, and the ledger page
   scenes/fade.js         the shared dark transition
   data/api.js            THE data interface; picks a backend
@@ -127,7 +133,13 @@ native/
   schema.sql             generated: ddl.sql + seed inserts
   schema_sql.h           generated: schema.sql as a C string
   sqlite3.c, sqlite3.h   vendored amalgamation, 3.51.2
+tools/
+  add-song.mjs           mp3 (ffmpeg) + lyrics -> the SQL for one playlist row
+  spectrum.mjs           FFT, log-spaced bands, dB -> 0..255 bytes
+  lrc.mjs                LRC parser, and an even-spread fallback
+  songsql.mjs            the INSERT shared by the tool and the tests
 test/
+  spectrum.mjs           FFT / bands against known tones, LRC cases
   geometry.mjs           walls, shelf placement, card progression
   render.mjs             one frame of every scene through a canvas stub
   backend.mjs            the JS<->wasm boundary, against a node-targeted build
@@ -391,3 +403,50 @@ Nothing in the staged plan. What remains is the work that needs eyes on it:
   start to earn its setup cost.
 - **Visit times are a weak signal** (see 6.7). Do not build anything that treats
   them as hours studied.
+
+---
+
+## 7. The Club
+
+A room with `rooms.kind = 'club'` has a playlist instead of shelves. Its front
+wall carries a screen: rows of thin bars that rise and fall like an audio
+analyser, and the lyrics rolling up above them. **Nothing is played** - the
+screen is driven by data stored with each song, stepped along a clock.
+
+**Data.** `songs(room_id, seq, title, artist, duration_ms, fps, bands, bars, lyrics)`.
+`bars` is base64 of `frames * bands` bytes (frame-major, 0..255); `lyrics` is
+JSON `[{"t": ms, "text": "..."}]`. At 24fps and 48 bands a four-minute song is
+about 370KB, so songs are *not* in the seed (`stub.js` / `gen-seed.mjs`): they
+are added with `tools/add-song.mjs`. `listSongs(roomId)` returns the playlist
+without the bulky columns; `getSong(id)` returns one with `bars` decoded to a
+`Uint8Array` and `lyrics` to objects.
+
+**Migration.** Databases saved before the club existed are opened as they were
+written, so `castle_init` runs `migrate()`: schema v2 adds `rooms.kind`, the
+`songs` table, and the CLUB room. It is idempotent and keyed on
+`meta.schema_version`, and covers saved snapshots and imported `.db` files alike.
+
+**Rendering.** The room itself (`geom/club.js`) is static and cached like any
+other. The screen contents are live, drawn after the cache blit and the torch
+light so the glass stays crisp, at ~65 strokes a frame. `screenPoint(u, v)` maps
+a spot on the glass to the world so the content follows the perspective. Bars
+use fast attack / slow release smoothing plus falling peak caps, because the data
+is only 24fps. Lyrics ease into place during the 450ms before each line's time.
+
+**Adding a song.**
+
+```sh
+node tools/add-song.mjs track.mp3 --lrc track.lrc --title "Name" --artist "Who"
+# E in the app, then:   sqlite3 castle.db < song-name.sql      then I to import
+```
+
+mp3 -> bars is: `ffmpeg` decodes to 22.05kHz mono PCM, a 2048-point Hann-windowed
+FFT every 1/24s, bin peaks folded into 48 log-spaced bands from 40Hz to 10kHz,
+a 3dB/octave tilt (music falls off with frequency, flat bars would leave the
+right half idle), then dB mapped from -60..0 onto 0..255. Lyrics come from an LRC
+file (`--lrc`) or, without timings, plain lines spread evenly (`--lyrics`).
+Alternatives considered and set aside: librosa (a second language), Web Audio in
+the browser (harder to test), and an envelope-only fake spectrum (not a real one).
+
+Not yet seen in a browser: the screen proportions, bar thickness, lyric sizes and
+the tilt/floor constants in `tools/spectrum.mjs` will want tuning by eye.

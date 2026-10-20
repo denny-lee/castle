@@ -20,7 +20,7 @@ const counts = { rooms: 0, shelves: 0, boxes: 0, cards: 0, tasks: 0 };
 let cardId = 0, taskId = 0;
 
 for (const [i, room] of rooms.entries()) {
-  out.push(`INSERT INTO rooms (id, code, name, sort) VALUES (${room.id}, ${q(room.code)}, ${q(room.name)}, ${i});\n`);
+  out.push(`INSERT INTO rooms (id, code, name, sort, kind) VALUES (${room.id}, ${q(room.code)}, ${q(room.name)}, ${i}, ${q(room.kind)});\n`);
   counts.rooms++;
 
   const layout = await stub.getRoomLayout(room.id);

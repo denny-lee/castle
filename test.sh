@@ -6,6 +6,7 @@
 #                  cards advance in sequence
 #   render.mjs     every scene draws a frame through a recording canvas stub,
 #                  with no errors, no non-finite coordinates, and a stroke budget
+#   spectrum.mjs   the FFT, band mapping and LRC parser, against known signals
 #   backend.mjs    the JS<->wasm boundary: marshalling, UTF-8, the serialise
 #                  round trip, persistence sequencing  (needs ./build.sh first)
 #   export         the exported .db opens in the real sqlite3 CLI, and the .sql
@@ -19,6 +20,10 @@ node test/geometry.mjs
 echo
 echo "== scene rendering =="
 node test/render.mjs
+
+echo
+echo "== mp3 -> bars, lyrics =="
+node test/spectrum.mjs
 
 if [ ! -f build/castle-node.mjs ]; then
   echo

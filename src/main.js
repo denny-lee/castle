@@ -10,6 +10,7 @@ import { drawDark, FADE_OUT, FADE_IN } from './scenes/fade.js';
 import { makeApproach } from './scenes/approach.js';
 import { makeHall } from './scenes/hall.js';
 import { makeRoom } from './scenes/room.js';
+import { makeClub } from './scenes/club.js';
 
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
@@ -67,6 +68,9 @@ async function construct(name, params) {
   }
   if (name === 'room') {
     hallIndex = params.hallIndex ?? hallIndex;
+    if (params.room.kind === 'club') {
+      return makeClub(app, params.room, await api.listSongs(params.room.id), hallIndex);
+    }
     const layout = await api.getRoomLayout(params.room.id);
     return makeRoom(app, params.room, layout, hallIndex);
   }

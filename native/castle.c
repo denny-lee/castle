@@ -136,6 +136,40 @@ static int exec(const char *sql) {
  *
  * Returns 0 on success, non-zero on failure - call castle_last_error() then.
  */
+/*
+ * Bring an older saved image up to the current schema. A snapshot in
+ * IndexedDB (or a file passed to import) is opened as it was written, so
+ * anything added since has to be applied here, idempotently. Fresh databases
+ * get all of this from ddl.sql instead - keep the two in step.
+ */
+static int migrate(void) {
+  sqlite3_stmt *st = NULL;
+  int version = 0;
+  if (sqlite3_prepare_v2(db, "SELECT value FROM meta WHERE key = 'schema_version'", -1, &st, NULL) == SQLITE_OK) {
+    if (sqlite3_step(st) == SQLITE_ROW) version = atoi((const char *)sqlite3_column_text(st, 0));
+    sqlite3_finalize(st);
+  }
+  if (version >= 2) return 0;
+
+  /* v2: club rooms and their playlists. */
+  int rc = exec(
+    "BEGIN;"
+    "ALTER TABLE rooms ADD COLUMN kind TEXT NOT NULL DEFAULT 'library' CHECK (kind IN ('library', 'club'));"
+    "CREATE TABLE IF NOT EXISTS songs ("
+    "  id INTEGER PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id),"
+    "  seq INTEGER NOT NULL, title TEXT NOT NULL, artist TEXT,"
+    "  duration_ms INTEGER NOT NULL, fps INTEGER NOT NULL, bands INTEGER NOT NULL,"
+    "  bars TEXT NOT NULL, lyrics TEXT NOT NULL, UNIQUE (room_id, seq));"
+    "CREATE INDEX IF NOT EXISTS songs_room ON songs(room_id, seq);"
+    "INSERT INTO rooms (id, code, name, sort, kind)"
+    "  SELECT COALESCE(MAX(id), 0) + 1, 'CLUB', 'CLUB', COALESCE(MAX(sort), -1) + 1, 'club' FROM rooms"
+    "  WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE code = 'CLUB');"
+    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');"
+    "COMMIT;");
+  if (rc != SQLITE_OK) { exec("ROLLBACK;"); return rc; }
+  return 0;
+}
+
 EXPORT int castle_init(const unsigned char *bytes, int len) {
   /* Built with SQLITE_OMIT_AUTOINIT, so the library must be started by hand. */
   if (sqlite3_initialize() != SQLITE_OK) {
@@ -169,6 +203,7 @@ EXPORT int castle_init(const unsigned char *bytes, int len) {
   }
 
   exec("PRAGMA foreign_keys = ON;");
+  if (migrate() != 0) return 5;
   return 0;
 }
 
@@ -280,7 +315,7 @@ static void emit_top_card(Buf *b, int box_id) {
 
 static void emit_rooms(Buf *b) {
   sqlite3_stmt *st = NULL;
-  sqlite3_prepare_v2(db, "SELECT id, code, name FROM rooms ORDER BY sort, id", -1, &st, NULL);
+  sqlite3_prepare_v2(db, "SELECT id, code, name, kind FROM rooms ORDER BY sort, id", -1, &st, NULL);
   buf_str(b, "[");
   for (int i = 0; sqlite3_step(st) == SQLITE_ROW; i++) {
     if (i) buf_str(b, ",");
@@ -290,9 +325,72 @@ static void emit_rooms(Buf *b) {
     buf_col_str(b, st, 1);
     buf_str(b, ",\"name\":");
     buf_col_str(b, st, 2);
+    buf_str(b, ",\"kind\":");
+    buf_col_str(b, st, 3);
     buf_str(b, "}");
   }
   buf_str(b, "]");
+  sqlite3_finalize(st);
+}
+
+/* The playlist of a club room: everything but the bulky bars and lyrics. */
+static void emit_songs(Buf *b, int room_id) {
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db,
+    "SELECT id, seq, title, artist, duration_ms FROM songs WHERE room_id = ?1 ORDER BY seq, id",
+    -1, &st, NULL);
+  sqlite3_bind_int(st, 1, room_id);
+  buf_str(b, "[");
+  for (int i = 0; sqlite3_step(st) == SQLITE_ROW; i++) {
+    if (i) buf_str(b, ",");
+    buf_str(b, "{\"id\":");
+    buf_int(b, sqlite3_column_int64(st, 0));
+    buf_str(b, ",\"seq\":");
+    buf_int(b, sqlite3_column_int64(st, 1));
+    buf_str(b, ",\"title\":");
+    buf_col_str(b, st, 2);
+    buf_str(b, ",\"artist\":");
+    buf_col_str(b, st, 3);
+    buf_str(b, ",\"durationMs\":");
+    buf_int(b, sqlite3_column_int64(st, 4));
+    buf_str(b, "}");
+  }
+  buf_str(b, "]");
+  sqlite3_finalize(st);
+}
+
+/* One song in full. `bars` is base64 and `lyrics` is JSON, both carried as
+ * strings; src/data/wasm.js decodes them. */
+static void emit_song(Buf *b, int song_id) {
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db,
+    "SELECT id, seq, title, artist, duration_ms, fps, bands, bars, lyrics FROM songs WHERE id = ?1",
+    -1, &st, NULL);
+  sqlite3_bind_int(st, 1, song_id);
+  if (sqlite3_step(st) != SQLITE_ROW) {
+    buf_str(b, "null");
+    sqlite3_finalize(st);
+    return;
+  }
+  buf_str(b, "{\"id\":");
+  buf_int(b, sqlite3_column_int64(st, 0));
+  buf_str(b, ",\"seq\":");
+  buf_int(b, sqlite3_column_int64(st, 1));
+  buf_str(b, ",\"title\":");
+  buf_col_str(b, st, 2);
+  buf_str(b, ",\"artist\":");
+  buf_col_str(b, st, 3);
+  buf_str(b, ",\"durationMs\":");
+  buf_int(b, sqlite3_column_int64(st, 4));
+  buf_str(b, ",\"fps\":");
+  buf_int(b, sqlite3_column_int64(st, 5));
+  buf_str(b, ",\"bands\":");
+  buf_int(b, sqlite3_column_int64(st, 6));
+  buf_str(b, ",\"bars\":");
+  buf_col_str(b, st, 7);
+  buf_str(b, ",\"lyrics\":");
+  buf_col_str(b, st, 8);
+  buf_str(b, "}");
   sqlite3_finalize(st);
 }
 
@@ -595,6 +693,16 @@ EXPORT char *castle_query(const char *op, int a, int b, const char *text) {
     emit_rooms(&buf);
     return buf_take(&buf);
   }
+  if (strcmp(op, "songs") == 0) {
+    Buf buf = {0};
+    emit_songs(&buf, a);
+    return buf_take(&buf);
+  }
+  if (strcmp(op, "song") == 0) {
+    Buf buf = {0};
+    emit_song(&buf, a);
+    return buf_take(&buf);
+  }
   if (strcmp(op, "layout") == 0) {
     Buf buf = {0};
     emit_layout(&buf, a);
@@ -635,7 +743,7 @@ EXPORT char *castle_query(const char *op, int a, int b, const char *text) {
 EXPORT char *castle_sql_dump(void) {
   if (!db) return json_error("database is not open");
 
-  static const char *TABLES[] = { "rooms", "shelves", "boxes", "cards", "tasks", "sessions", "meta" };
+  static const char *TABLES[] = { "rooms", "shelves", "boxes", "cards", "tasks", "sessions", "songs", "meta" };
   Buf b = {0};
   buf_str(&b, "-- Castle data dump. Restore with:\n"
               "--   sqlite3 castle.db < ddl.sql\n"
@@ -797,6 +905,52 @@ int main(void) {
   CHECK(card2 && strstr(card2, "\"firstWeekNo\":1") && strstr(card2, "2026-02-01"),
         "the top card carries the anchor too");
   castle_free(card2);
+
+  /* The club: seeded as a room of kind "club", with a playlist table. */
+  char *rms = castle_query("rooms", 0, 0, NULL);
+  CHECK(rms && strstr(rms, "\"CLUB\"") && strstr(rms, "\"kind\":\"club\""),
+        "the club room is seeded with kind club");
+  castle_free(rms);
+  char *none = castle_query("songs", 6, 0, NULL);
+  CHECK(none && strcmp(none, "[]") == 0, "a club starts with an empty playlist");
+  castle_free(none);
+  CHECK(exec("INSERT INTO songs (id, room_id, seq, title, artist, duration_ms, fps, bands, bars, lyrics)"
+             " VALUES (1, 6, 0, 'Night ''Owl''', NULL, 4000, 24, 2, 'AAECAw==',"
+             " '[{\"t\":500,\"text\":\"hi\"}]')") == SQLITE_OK, "a song can be inserted");
+  char *pl = castle_query("songs", 6, 0, NULL);
+  CHECK(pl && strstr(pl, "\"title\":\"Night 'Owl'\"") && strstr(pl, "\"artist\":null")
+           && strstr(pl, "\"durationMs\":4000") && !strstr(pl, "AAECAw"),
+        "the playlist lists songs without their bulky data");
+  castle_free(pl);
+  char *sg = castle_query("song", 1, 0, NULL);
+  CHECK(sg && strstr(sg, "\"bars\":\"AAECAw==\"") && strstr(sg, "\"bands\":2")
+           && strstr(sg, "\"lyrics\":\"[{\\\"t\\\":500"),
+        "a song comes back whole, bars and lyrics as strings");
+  castle_free(sg);
+  char *nosong = castle_query("song", 99, 0, NULL);
+  CHECK(nosong && strcmp(nosong, "null") == 0, "an unknown song is null");
+  castle_free(nosong);
+
+  /* Migration: age the database back to v1 (no kind column, no songs, no
+   * club), serialise it as a snapshot would be, and reopen. */
+  CHECK(exec("DROP TABLE songs; DELETE FROM rooms WHERE code = 'CLUB';"
+             " ALTER TABLE rooms DROP COLUMN kind;"
+             " UPDATE meta SET value = '1' WHERE key = 'schema_version';") == SQLITE_OK,
+        "the database can be aged back to schema v1");
+  int osize = castle_db_size();
+  unsigned char *oimg = malloc((size_t)osize);
+  CHECK(castle_db_read(oimg, osize) == osize, "the v1 image serialises");
+  CHECK(castle_init(oimg, osize) == 0, "a v1 image opens and migrates");
+  free(oimg);
+  char *mrooms = castle_query("rooms", 0, 0, NULL);
+  CHECK(mrooms && strstr(mrooms, "\"CLUB\"") && strstr(mrooms, "\"SKILL\"")
+               && strstr(mrooms, "\"kind\":\"library\""),
+        "migration adds the club and keeps the old rooms as libraries");
+  castle_free(mrooms);
+  char *mpl = castle_query("songs", 6, 0, NULL);
+  CHECK(mpl && strcmp(mpl, "[]") == 0, "migration creates the songs table");
+  castle_free(mpl);
+  CHECK(castle_init(NULL, 0) == 0, "a fresh database still creates cleanly");
 
   char *bad = castle_query("nonsense", 0, 0, NULL);
   CHECK(bad && strstr(bad, "unknown operation"), "an unknown operation is reported, not crashed on");

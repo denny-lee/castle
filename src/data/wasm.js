@@ -112,6 +112,18 @@ export function makeWasmBackend({ createModule, store }) {
 
     async listRooms() { return query('rooms'); },
     async getRoomLayout(roomId) { return query('layout', roomId); },
+    async listSongs(roomId) { return query('songs', roomId); },
+
+    /** One song, with the bar levels decoded to bytes and the lyrics to objects. */
+    async getSong(songId) {
+      const song = query('song', songId);
+      if (!song) return null;
+      return {
+        ...song,
+        bars: Uint8Array.from(atob(song.bars), (c) => c.charCodeAt(0)),
+        lyrics: JSON.parse(song.lyrics),
+      };
+    },
     async getTopCard(boxId) { return query('topCard', boxId); },
     async getTimeline(boxId) { return query('timeline', boxId); },
     async getLedger(boxId) { return query('ledger', boxId); },
