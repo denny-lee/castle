@@ -114,6 +114,11 @@ installInput((action) => {
     if (action === 'back') helpOpen = false;
     return;
   }
+  // With a shelf in hand, I adds a card to the box instead of importing a file.
+  if (action === 'import' && phase !== 'out' && phase !== 'loading' && scene?.takesImport?.()) {
+    scene.action(action);
+    return;
+  }
   if (action === 'export' || action === 'import') { handleTransfer(action); return; }
   if (phase !== 'out' && phase !== 'loading' && scene) scene.action(action);
 });

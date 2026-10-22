@@ -9,66 +9,31 @@ const ROOM_SEED = [
   {
     code: 'SKILL', name: 'SKILL',
     subjects: [
-      { shelf: 1, level: 0, slot: 0, label: 'Calculus', weeks: [
-        ['Ch.1 Limits: 1.1-1.4', 'Exercises 1A odd numbers', 'Summary notes'],
-        ['Ch.2 Continuity', 'Ch.2 Derivatives intro', 'Exercises 2A'],
-        ['Ch.3 Chain rule', 'Implicit differentiation', 'Exercises 3A-3B'],
-        ['Ch.4 Applications', 'Related rates problems', 'Mid-term review'],
-      ] },
-      { shelf: 1, level: 0, slot: 1, label: 'Linear Algebra', weeks: [
-        ['Ch.1 Vectors and spans', 'Problem set 1'],
-        ['Ch.2 Matrices', 'Gaussian elimination drills'],
-        ['Ch.3 Determinants', 'Problem set 3'],
-      ] },
-      { shelf: 1, level: 1, slot: 0, label: 'Discrete Math', weeks: [
-        ['Logic and proofs 1.1-1.3', 'Truth-table exercises'],
-        ['Induction', 'Prove 5 identities by induction'],
-      ] },
-      { shelf: 2, level: 0, slot: 0, label: 'Russian', weeks: [
-        ['Cyrillic alphabet: А-К', 'Handwriting drill x3', 'Listen: alphabet song'],
-        ['Cyrillic alphabet: Л-Я', 'Read 10 simple words aloud', 'Handwriting drill x3'],
-        ['Greetings and introductions', 'Vocabulary: 30 words', 'Record yourself'],
-        ['Cases: nominative', 'Vocabulary: 30 words', 'Short dialogue'],
-      ] },
-      { shelf: 2, level: 0, slot: 1, label: 'English', weeks: [
-        ['Phrasal verbs set 1', 'Read one essay', 'Write 200 words'],
-        ['Phrasal verbs set 2', 'Shadowing practice 20 min'],
-      ] },
-      { shelf: 2, level: 1, slot: 0, label: 'Japanese', weeks: [
-        ['Hiragana あ-の', 'Writing drill'],
-        ['Hiragana は-ん', 'Writing drill'],
-      ] },
-      { shelf: 3, level: 0, slot: 0, label: 'C Programming', weeks: [
-        ['K&R Ch.1', 'Practice #1: echo', 'Practice #2: wc'],
-        ['K&R Ch.2 types', 'Practice #3: bit ops', 'Practice #4: atoi'],
-        ['K&R Ch.5 pointers', 'Practice #5: own strcpy', 'Practice #6: qsort'],
-        ['K&R Ch.6 structs', 'Practice #7: linked list', 'Practice #8: hash table'],
-      ] },
-      { shelf: 3, level: 0, slot: 1, label: 'SQLite Internals', weeks: [
-        ['Read: file format overview', 'Dump a db with hexdump'],
-        ['B-tree pages', 'Walk a page by hand'],
-      ] },
-      { shelf: 3, level: 1, slot: 0, label: 'WebAssembly', weeks: [
-        ['wasm text format basics', 'Hand-write a wat module'],
-        ['JS <-> wasm memory', 'Pass a string both ways'],
-      ] },
+      { shelf: 1, level: 0, slot: 0, label: 'C basic', weeks: [] },
+      { shelf: 1, level: 0, slot: 1, label: 'Study Open Src', weeks: [] },
+      { shelf: 1, level: 0, slot: 2, label: 'Unix OS', weeks: [] },
+      { shelf: 1, level: 1, slot: 0, label: 'AI', weeks: [] },
+      { shelf: 1, level: 1, slot: 1, label: 'Math', weeks: [] },
+      { shelf: 1, level: 1, slot: 2, label: 'Quant', weeks: [] },
+      { shelf: 1, level: 2, slot: 0, label: 'Python', weeks: [] },
+      { shelf: 1, level: 2, slot: 1, label: 'Java', weeks: [] },
+      { shelf: 2, level: 0, slot: 0, label: 'English', weeks: [] },
+      { shelf: 2, level: 0, slot: 1, label: 'Russian', weeks: [] },
+      { shelf: 3, level: 0, slot: 0, label: '金刚功', weeks: [] },
+      { shelf: 3, level: 0, slot: 1, label: '易筋经', weeks: [] },
+      { shelf: 3, level: 0, slot: 2, label: '剑', weeks: [] },
+      { shelf: 3, level: 1, slot: 0, label: '紫微斗数', weeks: [] },
     ],
   },
   {
     code: 'INTEREST', name: 'INTEREST',
     subjects: [
-      { shelf: 1, level: 0, slot: 0, label: 'Astronomy', weeks: [
-        ['Constellations: winter sky', 'One clear-night observation'],
-        ['Planetary motion', 'Sketch Jupiter at 3 dates'],
+      { shelf: 1, level: 0, slot: 0, label: 'Guitar', weeks: [
+        ['可惜没如果'],
       ] },
-      { shelf: 1, level: 1, slot: 0, label: 'Chess', weeks: [
-        ['Endgame: K+P vs K', '20 tactics puzzles'],
-        ['Openings: Italian game', '20 tactics puzzles'],
-      ] },
-      { shelf: 2, level: 0, slot: 0, label: 'History of Rome', weeks: [
-        ['Founding to Republic', 'Timeline notes'],
-        ['Punic wars', 'Map exercise'],
-      ] },
+      { shelf: 1, level: 0, slot: 1, label: 'Drawing', weeks: [] },
+      { shelf: 1, level: 0, slot: 2, label: 'Writing', weeks: [] },
+      { shelf: 1, level: 1, slot: 0, label: 'Swimming', weeks: [] },
     ],
   },
   {
@@ -88,14 +53,12 @@ const ROOM_SEED = [
   {
     code: 'APPETENCE', name: 'APPETENCE',
     subjects: [
-      { shelf: 1, level: 0, slot: 0, label: 'Running', weeks: [
-        ['3 x 5km easy', 'Stretch daily'],
-        ['2 x 5km + 1 x 8km', 'Stretch daily'],
-      ] },
-      { shelf: 2, level: 0, slot: 0, label: 'Cooking', weeks: [
-        ['Knife skills', 'Cook 3 new dishes'],
-        ['Stocks and sauces', 'Cook 3 new dishes'],
-      ] },
+      { shelf: 1, level: 0, slot: 0, label: 'Porsche', weeks: [] },
+      { shelf: 1, level: 0, slot: 1, label: 'Pilot License', weeks: [] },
+      { shelf: 1, level: 0, slot: 2, label: 'Deep Diving', weeks: [] },
+      { shelf: 1, level: 1, slot: 0, label: 'Mac', weeks: [] },
+      { shelf: 1, level: 1, slot: 1, label: '反曲弓', weeks: [] },
+      { shelf: 1, level: 1, slot: 2, label: '徕卡', weeks: [] },
     ],
   },
   {
@@ -244,6 +207,46 @@ export const stub = {
       remaining: cs.length,
       ...anchorOf(bx.cardIds.map((id) => db.cards.get(id))),
     };
+  },
+
+  async addBox(shelfId, label) {
+    const name = String(label || '').trim();
+    if (!name) throw new Error('a box needs a name');
+    const shelf = db.rooms.flatMap((r) => r.shelves).find((s) => s.id === shelfId);
+    if (!shelf) throw new Error('no such shelf');
+    for (let level = 0; level < shelf.levels; level++) {
+      for (let slot = 0; slot < shelf.slots; slot++) {
+        if (level === shelf.levels - 1 && slot === shelf.slots - 1) continue;   // the bin
+        if (shelf.boxes.some((b) => b.level === level && b.slot === slot)) continue;
+        const roomId = Math.floor(shelf.id / 100);
+        const bx = {
+          id: Math.max(0, ...db.boxes.keys()) + 1, shelfId: shelf.id, roomId,
+          label: name, level, slot, cardIds: [],
+        };
+        db.boxes.set(bx.id, bx);
+        shelf.boxes.push(bx);
+        return { boxId: bx.id, level, slot };
+      }
+    }
+    throw new Error('this shelf is full');
+  },
+
+  async addCard(boxId, text) {
+    const bx = db.boxes.get(boxId);
+    if (!bx) throw new Error('no such box');
+    const items = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!items.length) throw new Error('there are no items to add');
+    const cs = bx.cardIds.map((id) => db.cards.get(id));
+    const weekNo = cs.reduce((m, c) => Math.max(m, c.weekNo), 0) + 1;
+    const card = {
+      id: Math.max(0, ...db.cards.keys()) + 1, boxId, weekNo, title: `Week ${weekNo}`,
+      seq: cs.reduce((m, c) => Math.max(m, c.seq), -1) + 1,
+      tasks: items.map((t, i) => ({ idx: i, text: t, done: 0 })),
+      doneAt: null,
+    };
+    db.cards.set(card.id, card);
+    bx.cardIds.push(card.id);
+    return { cardId: card.id, weekNo, taskCount: items.length };
   },
 
   async markCardDone(cardId) {

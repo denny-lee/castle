@@ -292,7 +292,7 @@ generate `native/schema.sql` = `ddl.sql` + seed inserts. The Stage 1 fake data
 and the real database therefore cannot drift: **to change the curriculum, edit
 `ROOM_SEED` in `stub.js` and re-run `./build.sh`.**
 
-Current seed: 5 rooms, 45 shelves, 19 subject boxes, 47 cards, 108 tasks.
+Current seed: 6 rooms, 45 shelves, 29 subject boxes, 13 cards, 26 tasks. SKILL, INTEREST and APPETENCE hold your real boxes (only Guitar has a card so far); IMAGINE and WORKSHOP still carry demo cards.
 
 ### 6.4 Schema
 

@@ -679,6 +679,147 @@ static char *mark_done(int card_id, const char *when) {
   return buf_take(&b);
 }
 
+/* Append a card to the end of a box. Every non-blank line of `text` becomes one
+ * task, in order. The card takes the next seq and the next week number. */
+static char *add_card(int box_id, const char *text) {
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db, "SELECT 1 FROM boxes WHERE id = ?1", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, box_id);
+  int found = sqlite3_step(st) == SQLITE_ROW;
+  sqlite3_finalize(st);
+  if (!found) return json_error("no such box");
+
+  /* Find the lines first, so a blank paste is refused before anything is written. */
+  const char *lines[1024];
+  size_t lens[1024];
+  int n = 0;
+  const char *p = text ? text : "";
+  while (*p && n < 1024) {
+    const char *end = strchr(p, '\n');
+    size_t len = end ? (size_t)(end - p) : strlen(p);
+    const char *a = p;
+    while (len && (*a == ' ' || *a == '\t' || *a == '\r')) { a++; len--; }
+    while (len && (a[len - 1] == ' ' || a[len - 1] == '\t' || a[len - 1] == '\r')) len--;
+    if (len) { lines[n] = a; lens[n] = len; n++; }
+    if (!end) break;
+    p = end + 1;
+  }
+  if (n == 0) return json_error("there are no items to add");
+
+  if (exec("BEGIN") != SQLITE_OK) return json_error(last_error);
+
+  sqlite3_prepare_v2(db,
+    "INSERT INTO cards (box_id, seq, week_no, title, created_at, done_at)"
+    " SELECT ?1, COALESCE(MAX(seq) + 1, 0), COALESCE(MAX(week_no), 0) + 1,"
+    " 'Week ' || (COALESCE(MAX(week_no), 0) + 1), NULL, NULL FROM cards WHERE box_id = ?1",
+    -1, &st, NULL);
+  sqlite3_bind_int(st, 1, box_id);
+  int rc = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    set_error("add card");
+    exec("ROLLBACK");
+    return json_error(last_error);
+  }
+  sqlite3_int64 card_id = sqlite3_last_insert_rowid(db);
+
+  for (int i = 0; i < n; i++) {
+    sqlite3_prepare_v2(db,
+      "INSERT INTO tasks (card_id, idx, text, done) VALUES (?1, ?2, ?3, 0)", -1, &st, NULL);
+    sqlite3_bind_int64(st, 1, card_id);
+    sqlite3_bind_int(st, 2, i);
+    sqlite3_bind_text(st, 3, lines[i], (int)lens[i], SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) {
+      set_error("add card");
+      exec("ROLLBACK");
+      return json_error(last_error);
+    }
+  }
+  if (exec("COMMIT") != SQLITE_OK) return json_error(last_error);
+
+  sqlite3_prepare_v2(db, "SELECT week_no FROM cards WHERE id = ?1", -1, &st, NULL);
+  sqlite3_bind_int64(st, 1, card_id);
+  int week = sqlite3_step(st) == SQLITE_ROW ? sqlite3_column_int(st, 0) : 0;
+  sqlite3_finalize(st);
+
+  Buf b = {0};
+  buf_str(&b, "{\"cardId\":");
+  buf_int(&b, card_id);
+  buf_str(&b, ",\"weekNo\":");
+  buf_int(&b, week);
+  buf_str(&b, ",\"taskCount\":");
+  buf_int(&b, n);
+  buf_str(&b, "}");
+  return buf_take(&b);
+}
+
+/* Put a new, empty box on a shelf, in the first free slot reading left to right,
+ * top to bottom. The bottom-right slot is the bin and is never used. */
+static char *add_box(int shelf_id, const char *text) {
+  char label[256];
+  const char *a = text ? text : "";
+  size_t len = strlen(a);
+  while (len && (*a == ' ' || *a == '\t' || *a == '\r' || *a == '\n')) { a++; len--; }
+  while (len && (a[len - 1] == ' ' || a[len - 1] == '\t' || a[len - 1] == '\r' || a[len - 1] == '\n')) len--;
+  if (len == 0) return json_error("a box needs a name");
+  if (len >= sizeof label) {
+    len = sizeof label - 1;
+    /* do not cut a UTF-8 sequence in half */
+    while (len && ((unsigned char)a[len] & 0xC0) == 0x80) len--;
+  }
+  memcpy(label, a, len);
+  label[len] = '\0';
+
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db, "SELECT levels, slots FROM shelves WHERE id = ?1", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, shelf_id);
+  if (sqlite3_step(st) != SQLITE_ROW) {
+    sqlite3_finalize(st);
+    return json_error("no such shelf");
+  }
+  int levels = sqlite3_column_int(st, 0), slots = sqlite3_column_int(st, 1);
+  sqlite3_finalize(st);
+
+  for (int lv = 0; lv < levels; lv++) {
+    for (int sl = 0; sl < slots; sl++) {
+      if (lv == levels - 1 && sl == slots - 1) continue;   /* the bin */
+      sqlite3_prepare_v2(db, "SELECT 1 FROM boxes WHERE shelf_id = ?1 AND level = ?2 AND slot = ?3",
+                         -1, &st, NULL);
+      sqlite3_bind_int(st, 1, shelf_id);
+      sqlite3_bind_int(st, 2, lv);
+      sqlite3_bind_int(st, 3, sl);
+      int taken = sqlite3_step(st) == SQLITE_ROW;
+      sqlite3_finalize(st);
+      if (taken) continue;
+
+      sqlite3_prepare_v2(db, "INSERT INTO boxes (shelf_id, label, level, slot) VALUES (?1, ?2, ?3, ?4)",
+                         -1, &st, NULL);
+      sqlite3_bind_int(st, 1, shelf_id);
+      sqlite3_bind_text(st, 2, label, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_int(st, 3, lv);
+      sqlite3_bind_int(st, 4, sl);
+      int rc = sqlite3_step(st);
+      sqlite3_finalize(st);
+      if (rc != SQLITE_DONE) {
+        set_error("add box");
+        return json_error(last_error);
+      }
+      Buf b = {0};
+      buf_str(&b, "{\"boxId\":");
+      buf_int(&b, sqlite3_last_insert_rowid(db));
+      buf_str(&b, ",\"level\":");
+      buf_int(&b, lv);
+      buf_str(&b, ",\"slot\":");
+      buf_int(&b, sl);
+      buf_str(&b, "}");
+      return buf_take(&b);
+    }
+  }
+  return json_error("this shelf is full");
+}
+
 /*
  * The one query entry point. `op` selects the operation; `a` and `b` are its
  * integer arguments and `text` its string argument, all unused for most ops.
@@ -725,6 +866,12 @@ EXPORT char *castle_query(const char *op, int a, int b, const char *text) {
   }
   if (strcmp(op, "markDone") == 0) {
     return mark_done(a, text);
+  }
+  if (strcmp(op, "addCard") == 0) {
+    return add_card(a, text);
+  }
+  if (strcmp(op, "addBox") == 0) {
+    return add_box(a, text);
   }
   if (strcmp(op, "sessionStart") == 0) {
     return session_start(a, b, text);
@@ -810,6 +957,10 @@ int main(void) {
       else { printf("FAIL %s\n", msg); fails++; } \
     } while (0)
 
+  /* SKILL, INTEREST and APPETENCE hold real, card-less boxes; WORKSHOP's
+   Castle App is the first box with cards to exercise. */
+  enum { ROOM = 5, BOX = 27, CARD1 = 7, CARD2 = 8 };
+
   CHECK(castle_init(NULL, 0) == 0, "fresh database is created and seeded");
 
   char *rooms = castle_query("rooms", 0, 0, NULL);
@@ -817,26 +968,26 @@ int main(void) {
         "rooms lists the seeded categories");
   castle_free(rooms);
 
-  char *layout = castle_query("layout", 1, 0, NULL);
-  CHECK(layout && strstr(layout, "\"wall\":\"front\"") && strstr(layout, "\"Calculus\""),
+  char *layout = castle_query("layout", ROOM, 0, NULL);
+  CHECK(layout && strstr(layout, "\"wall\":\"front\"") && strstr(layout, "\"Castle App\""),
         "layout carries shelves, walls and box labels");
   castle_free(layout);
 
-  char *card = castle_query("topCard", 1, 0, NULL);
-  CHECK(card && strstr(card, "\"weekNo\":1") && strstr(card, "Limits"),
-        "top card of box 1 is week 1, with its tasks");
+  char *card = castle_query("topCard", BOX, 0, NULL);
+  CHECK(card && strstr(card, "\"weekNo\":1") && strstr(card, "sketch renderer"),
+        "top card of the Castle App box is week 1, with its tasks");
   castle_free(card);
 
   /* Find that card's id the honest way, then complete it. */
-  char *done = castle_query("markDone", 1, 0, "2026-02-01T10:00:00.000Z");
+  char *done = castle_query("markDone", CARD1, 0, "2026-02-01T10:00:00.000Z");
   CHECK(done && strstr(done, "\"weekNo\":2"), "marking week 1 done reveals week 2");
   castle_free(done);
 
-  char *again = castle_query("markDone", 1, 0, "2026-02-01T10:00:00.000Z");
+  char *again = castle_query("markDone", CARD1, 0, "2026-02-01T10:00:00.000Z");
   CHECK(again && strstr(again, "error"), "completing the same card twice is refused");
   castle_free(again);
 
-  char *tl = castle_query("timeline", 1, 0, NULL);
+  char *tl = castle_query("timeline", BOX, 0, NULL);
   CHECK(tl && strstr(tl, "\"weekNo\":1") && strstr(tl, "2026-02-01"),
         "the timeline records the completion and its timestamp");
   castle_free(tl);
@@ -849,7 +1000,7 @@ int main(void) {
   CHECK(memcmp(image, "SQLite format 3", 15) == 0, "the image really is a SQLite file");
 
   CHECK(castle_init(image, size) == 0, "the image can be reopened");
-  char *after = castle_query("topCard", 1, 0, NULL);
+  char *after = castle_query("topCard", BOX, 0, NULL);
   CHECK(after && strstr(after, "\"weekNo\":2"),
         "progress survives the snapshot round trip");
   castle_free(after);
@@ -864,7 +1015,7 @@ int main(void) {
   castle_free(dump);
 
   /* Sessions and the ledger. */
-  char *s1 = castle_query("sessionStart", 1, 2, "2026-02-02T09:00:00.000Z");
+  char *s1 = castle_query("sessionStart", BOX, CARD2, "2026-02-02T09:00:00.000Z");
   CHECK(s1 && strstr(s1, "\"id\":1"), "starting a visit returns a session id");
   castle_free(s1);
   char *s2 = castle_query("sessionEnd", 1, 0, "2026-02-02T09:25:00.000Z");
@@ -875,36 +1026,71 @@ int main(void) {
         "ending it twice is reported, not an error");
   castle_free(s3);
 
-  char *led = castle_query("ledger", 1, 0, NULL);
-  CHECK(led && strstr(led, "\"subject\":\"Calculus\""), "the ledger names the subject");
+  char *led = castle_query("ledger", BOX, 0, NULL);
+  CHECK(led && strstr(led, "\"subject\":\"Castle App\""), "the ledger names the subject");
   CHECK(led && strstr(led, "\"visits\":1"), "the ledger counts the visit");
   CHECK(led && strstr(led, "\"seconds\":1500"), "and measures it as 25 minutes");
   CHECK(led && strstr(led, "\"firstWeekNo\":1"), "the ledger anchors on week 1");
-  CHECK(led && strstr(led, "\"weeks\":[") && strstr(led, "\"taskCount\":3"),
+  CHECK(led && strstr(led, "\"weeks\":[") && strstr(led, "\"taskCount\":2"),
         "the ledger lists every week with its task count");
   castle_free(led);
 
   /* An abandoned visit counts as a visit but adds no time. */
-  char *s4 = castle_query("sessionStart", 1, 0, "2026-02-03T09:00:00.000Z");
+  char *s4 = castle_query("sessionStart", BOX, 0, "2026-02-03T09:00:00.000Z");
   castle_free(s4);
-  char *led2 = castle_query("ledger", 1, 0, NULL);
+  char *led2 = castle_query("ledger", BOX, 0, NULL);
   CHECK(led2 && strstr(led2, "\"visits\":2") && strstr(led2, "\"unfinishedVisits\":1")
              && strstr(led2, "\"seconds\":1500"),
         "an abandoned visit is counted but contributes no time");
   castle_free(led2);
 
   /* The pace anchor rides along with boxes and cards, for overdue flagging. */
-  char *lay2 = castle_query("layout", 1, 0, NULL);
+  char *lay2 = castle_query("layout", ROOM, 0, NULL);
   CHECK(lay2 && strstr(lay2, "\"activeWeekNo\":2") && strstr(lay2, "\"firstWeekNo\":1"),
         "boxes carry the active week and the pace anchor");
   CHECK(lay2 && strstr(lay2, "\"activeWeekNo\":1") && strstr(lay2, "\"firstDoneAt\":null"),
         "an untouched box reports week 1 and no anchor");
   castle_free(lay2);
 
-  char *card2 = castle_query("topCard", 1, 0, NULL);
+  char *card2 = castle_query("topCard", BOX, 0, NULL);
   CHECK(card2 && strstr(card2, "\"firstWeekNo\":1") && strstr(card2, "2026-02-01"),
         "the top card carries the anchor too");
   castle_free(card2);
+
+  /* Appending a card: blank lines are dropped, the card goes to the end. */
+  char *added = castle_query("addCard", BOX, 0, "  first item \r\n\n\tsecond 项目\n   \n");
+  CHECK(added && strstr(added, "\"weekNo\":4") && strstr(added, "\"taskCount\":2"),
+        "addCard appends week 4 with one task per non-blank line");
+  castle_free(added);
+  char *noitems = castle_query("addCard", BOX, 0, " \n\t\n");
+  CHECK(noitems && strstr(noitems, "no items"), "a blank paste is refused");
+  castle_free(noitems);
+  char *nobox = castle_query("addCard", 9999, 0, "x");
+  CHECK(nobox && strstr(nobox, "no such box"), "an unknown box is refused");
+  castle_free(nobox);
+  char *led3 = castle_query("ledger", BOX, 0, NULL);
+  CHECK(led3 && strstr(led3, "\"weekNo\":4") && strstr(led3, "\"title\":\"Week 4\""),
+        "the new card shows at the end of the ledger");
+  castle_free(led3);
+
+  /* Adding a box: first free slot, never the bin, refused when full or unnamed. */
+  char *nb = castle_query("addBox", 501, 0, "  新 box ");
+  CHECK(nb && strstr(nb, "\"level\":0") && strstr(nb, "\"slot\":2"),
+        "a new box takes the first free slot on the shelf");
+  castle_free(nb);
+  char *nblay = castle_query("layout", ROOM, 0, NULL);
+  CHECK(nblay && strstr(nblay, "\"label\":\"新 box\""), "the new box is in the layout, trimmed");
+  castle_free(nblay);
+  char *nb2 = NULL;
+  for (int i = 0; i < 12; i++) { castle_free(nb2); nb2 = castle_query("addBox", 501, 0, "filler"); }
+  CHECK(nb2 && strstr(nb2, "shelf is full"), "a full shelf refuses another box (the bin stays free)");
+  castle_free(nb2);
+  char *nb3 = castle_query("addBox", 501, 0, "   ");
+  CHECK(nb3 && strstr(nb3, "needs a name"), "a blank name is refused");
+  castle_free(nb3);
+  char *nb4 = castle_query("addBox", 99999, 0, "x");
+  CHECK(nb4 && strstr(nb4, "no such shelf"), "an unknown shelf is refused");
+  castle_free(nb4);
 
   /* The club: seeded as a room of kind "club", with a playlist table. */
   char *rms = castle_query("rooms", 0, 0, NULL);

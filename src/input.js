@@ -5,7 +5,7 @@ const MAP = {
   Space: 'open', Enter: 'open', NumpadEnter: 'open',
   Escape: 'back', Backspace: 'back',
   KeyD: 'done', KeyY: 'yes', KeyN: 'no', KeyT: 'timeline',
-  KeyE: 'export', KeyI: 'import', Slash: 'help', KeyH: 'help',
+  KeyB: 'newbox', KeyE: 'export', KeyI: 'import', Slash: 'help', KeyH: 'help',
 };
 
 for (let i = 1; i <= 9; i++) {
@@ -17,6 +17,9 @@ export function installInput(onAction) {
   const held = new Set();
 
   function keydown(e) {
+    // A text box (the add-items dialog) owns the keyboard while it has focus.
+    const t = e.target;
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
     const action = MAP[e.code];
     if (!action) return;
     e.preventDefault();

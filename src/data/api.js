@@ -7,6 +7,8 @@
 //   getSong(songId)        -> {id, seq, title, artist, durationMs, fps, bands,
 //                              bars: Uint8Array(frames*bands), lyrics:[{t, text}]} | null
 //   getTopCard(boxId)      -> {id, weekNo, title, subject, tasks:[{text}]} | null
+//   addBox(shelfId, label) -> {boxId, level, slot}           (first free slot; never the bin)
+//   addCard(boxId, text)   -> {cardId, weekNo, taskCount}   (one task per non-blank line)
 //   markCardDone(cardId)   -> {nextCard}
 //   getTimeline(boxId)     -> [{cardId, weekNo, doneAt}]
 //   getLedger(boxId)       -> {subject, firstDoneAt, firstWeekNo, visits, seconds,

@@ -52,23 +52,58 @@ ok(layout.filter((s) => s.wall === 'front').length === 3
 ok(layout.every((s) => s.levels === 4 && s.slots === 3), 'every shelf reports 4 levels and 3 slots');
 
 const allBoxes = layout.flatMap((s) => s.boxes);
-ok(allBoxes.length === 9, `SKILL holds ${allBoxes.length} subject boxes`);
-const calculus = allBoxes.find((b) => b.label === 'Calculus');
-ok(calculus && calculus.cardCount === 4 && calculus.remaining === 4,
-  'Calculus has 4 cards, none done');
+ok(allBoxes.length === 14, `SKILL holds ${allBoxes.length} subject boxes`);
+ok(allBoxes.every((b) => b.cardCount === 0), 'SKILL boxes hold no cards yet');
+
+// The cards-bearing demo data lives in WORKSHOP.
+const workshop = rooms.find((r) => r.code === 'WORKSHOP');
+const wsBoxes = (await api.getRoomLayout(workshop.id)).flatMap((s) => s.boxes);
+const calculus = wsBoxes.find((b) => b.label === 'Castle App');
+ok(calculus && calculus.cardCount === 3 && calculus.remaining === 3,
+  'Castle App has 3 cards, none done');
 
 // UTF-8 has to survive C, the wasm heap and JSON.parse intact.
-const russianBox = (await api.getRoomLayout(1)).flatMap((s) => s.boxes).find((b) => b.label === 'Russian');
-const ru = await api.getTopCard(russianBox.id);
-ok(ru.tasks.some((t) => t.text.includes('А-К')), 'Cyrillic in task text survives the round trip');
-const jp = await api.getTopCard(allBoxes.find((b) => b.label === 'Japanese').id);
-ok(jp.tasks.some((t) => t.text.includes('あ-の')), 'Japanese in task text survives too');
+ok(['金刚功', '易筋经', '紫微斗数'].every((l) => allBoxes.some((b) => b.label === l)),
+  'Chinese box labels survive the round trip');
+ok(allBoxes.every((b) => b.label !== ''), 'no box lost its label');
+ok(await api.getTopCard(allBoxes[0].id) === null, 'a box with no cards reports no top card');
+
+// Importing items: one card appended, one task per non-blank line.
+{
+  const writes = saved.writes;
+  const added = await api.addCard(allBoxes[0].id, ' 学习 C \r\n\nK&R ch.1\n  \n');
+  ok(added.weekNo === 1 && added.taskCount === 2, 'addCard gives an empty box its week 1 with 2 items');
+  ok(saved.writes === writes + 1, 'the new card was snapshotted');
+  const top = await api.getTopCard(allBoxes[0].id);
+  ok(top.tasks.map((t) => t.text).join('|') === '学习 C|K&R ch.1', 'items are trimmed, ordered and UTF-8 safe');
+  ok((await api.addCard(allBoxes[0].id, 'more')).weekNo === 2, 'a second card goes to the end as week 2');
+  ok((await api.getTopCard(allBoxes[0].id)).weekNo === 1, 'and the first card is still on top');
+  let err = null;
+  try { await api.addCard(allBoxes[0].id, '  \n '); } catch (e) { err = e; }
+  ok(err && /no items/.test(err.message), 'a blank paste is refused');
+}
+
+// New boxes: first free slot, never the bin, UTF-8 labels.
+{
+  const shelf3 = layout.find((s) => s.number === 3);          // 4 boxes: 3 + 1 on the second plank
+  const nb = await api.addBox(shelf3.id, '  太极 ');
+  ok(nb.level === 1 && nb.slot === 1, `a new box takes the first free slot (${nb.level},${nb.slot})`);
+  const back = (await api.getRoomLayout(1)).find((s) => s.number === 3).boxes.find((b) => b.id === nb.boxId);
+  ok(back && back.label === '太极' && back.cardCount === 0, 'it comes back trimmed, with no cards');
+  let err = null;
+  try { await api.addBox(shelf3.id, '   '); } catch (e) { err = e; }
+  ok(err && /needs a name/.test(err.message), 'a blank name is refused');
+  let n = 0;
+  err = null;
+  try { for (; n < 20; n++) await api.addBox(shelf3.id, 'x' + n); } catch (e) { err = e; }
+  ok(err && /full/.test(err.message) && n === 6, `the shelf fills up after ${n} more boxes, keeping the bin free`);
+}
 
 const card = await api.getTopCard(calculus.id);
-ok(card.weekNo === 1 && card.subject === 'Calculus' && card.remaining === 4,
+ok(card.weekNo === 1 && card.subject === 'Castle App' && card.remaining === 3,
   `top card is week 1 of Calculus, "${card.tasks[0].text}"`);
-ok(card.tasks.length === 3 && card.tasks.every((t) => t.done === false),
-  'its 3 tasks all come back unticked');
+ok(card.tasks.length === 2 && card.tasks.every((t) => t.done === false),
+  'its 2 tasks all come back unticked');
 
 const before = saved.writes;
 const { nextCard } = await api.markCardDone(card.id);
@@ -84,15 +119,15 @@ const timeline = await api.getTimeline(calculus.id);
 ok(timeline.length === 1 && timeline[0].weekNo === 1 && /^\d{4}-\d{2}-\d{2}T/.test(timeline[0].doneAt),
   `the timeline records week 1 at ${timeline[0] && timeline[0].doneAt}`);
 
-const refreshed = (await api.getRoomLayout(1)).flatMap((s) => s.boxes).find((b) => b.id === calculus.id);
-ok(refreshed.doneCount === 1 && refreshed.remaining === 3, 'the layout reflects the completion');
+const refreshed = (await api.getRoomLayout(workshop.id)).flatMap((s) => s.boxes).find((b) => b.id === calculus.id);
+ok(refreshed.doneCount === 1 && refreshed.remaining === 2, 'the layout reflects the completion');
 
 // ---- the pace anchor rides along, for overdue flagging ---------------------
-const paced = (await api.getRoomLayout(1)).flatMap((s) => s.boxes).find((b) => b.id === calculus.id);
+const paced = (await api.getRoomLayout(workshop.id)).flatMap((s) => s.boxes).find((b) => b.id === calculus.id);
 ok(paced.activeWeekNo === 2 && paced.firstWeekNo === 1 && typeof paced.firstDoneAt === 'string',
   'a worked box carries its active week and pace anchor');
-const untouchedBox = (await api.getRoomLayout(1)).flatMap((s) => s.boxes)
-  .find((b) => b.label === 'Discrete Math');
+const untouchedBox = (await api.getRoomLayout(workshop.id)).flatMap((s) => s.boxes)
+  .find((b) => b.label === 'Keyboard Build');
 ok(untouchedBox.activeWeekNo === 1 && untouchedBox.firstDoneAt === null,
   'an untouched box reports week 1 waiting and no anchor');
 
@@ -118,9 +153,9 @@ const { id: abandoned } = await api.startSession(calculus.id, null);
 ok(abandoned > visit, 'a visit can be opened without a card');
 
 const raw = await api.getLedger(calculus.id);
-ok(raw.subject === 'Calculus', 'the ledger names its subject');
-ok(raw.weeks.length === 4 && raw.weeks[0].taskCount === 3,
-  'the ledger lists all 4 weeks with task counts');
+ok(raw.subject === 'Castle App', 'the ledger names its subject');
+ok(raw.weeks.length === 3 && raw.weeks[0].taskCount === 2,
+  'the ledger lists all 3 weeks with task counts');
 ok(raw.visits === 2 && raw.unfinishedVisits === 1,
   'both visits are counted, one still open');
 ok(raw.firstWeekNo === 1 && typeof raw.firstDoneAt === 'string',
@@ -128,15 +163,15 @@ ok(raw.firstWeekNo === 1 && typeof raw.firstDoneAt === 'string',
 
 const { computeLedger } = await import('../src/scenes/ledger.js');
 const led = computeLedger(raw);
-ok(led.doneCount === 1 && led.remaining === 3, 'computeLedger totals the weeks');
+ok(led.doneCount === 1 && led.remaining === 2, 'computeLedger totals the weeks');
 ok(led.weeks[0].driftDays === 0, 'the anchor week has zero drift by construction');
 ok(led.weeks[1].plannedAt instanceof Date
   && Math.round((led.weeks[1].plannedAt - new Date(raw.firstDoneAt)) / 86400000) === 7,
   'week 2 is planned exactly one week after the anchor');
-ok(led.weeks[3].done === false && led.weeks[3].driftDays === null,
+ok(led.weeks[2].done === false && led.weeks[2].driftDays === null,
   'an unfinished week has a due date but no drift');
 ok(led.paceDays === null, 'one completion is not enough to measure a pace');
-ok(computeLedger(await api.getLedger(allBoxes.find((b) => b.label === 'Discrete Math').id)).anchored === false,
+ok(computeLedger(await api.getLedger(untouchedBox.id)).anchored === false,
   'an untouched box reports no anchor');
 
 // ---- the club ---------------------------------------------------------------
@@ -157,7 +192,7 @@ ok(new TextDecoder().decode(bytes.slice(0, 15)) === 'SQLite format 3',
 const sql = await api.exportSql();
 ok(sql.includes('INSERT OR REPLACE INTO rooms') && sql.includes('INSERT OR REPLACE INTO cards'),
   'exportSql dumps the rows');
-ok(sql.includes('А-К'), 'the SQL dump keeps non-ASCII text intact');
+ok(sql.includes('金刚功'), 'the SQL dump keeps non-ASCII text intact');
 
 // Leave the .db where the build can hand it to the sqlite3 CLI for checking.
 const dbPath = new URL('../build/export-check.db', import.meta.url);

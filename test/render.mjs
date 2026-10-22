@@ -154,16 +154,18 @@ await drive('room/turned-left', room, { actions: ['left'] });
 await drive('room/turned-back', room, { actions: ['left'] });
 await drive('room/shelf-2', room, { actions: ['shelf2'] });
 await drive('room/shelf-5-other-wall', room, { actions: ['shelf5'] });
-const rc = await drive('room/card-open', room, { actions: ['shelf2', 'open'] });
-if (rc && !rc.texts.some((t) => /Cyrillic/.test(t[0]))) bad('room: card task text not drawn');
-if (rc && !rc.texts.some((t) => t[0] === 'Russian')) bad('room: card subject not drawn');
-await drive('room/confirm-prompt', room, { actions: ['done'] });
-await drive('room/after-done', room, { actions: ['yes'], frames: 6, dt: 0.12 });
+// SKILL's boxes have no cards yet, so card handling runs in WORKSHOP.
+const wroom = makeRoom(app, rooms[4], await stub.getRoomLayout(5), 0);
+const rc = await drive('room/card-open', wroom, { actions: ['shelf2', 'open'] });
+if (rc && !rc.texts.some((t) => /Backup strategy/.test(t[0]))) bad('room: card task text not drawn');
+if (rc && !rc.texts.some((t) => t[0] === 'Home Server')) bad('room: card subject not drawn');
+await drive('room/confirm-prompt', wroom, { actions: ['done'] });
+await drive('room/after-done', wroom, { actions: ['yes'], frames: 6, dt: 0.12 });
 await new Promise((r) => setTimeout(r, 40));
-await drive('room/post-refresh', room, { frames: 3 });
-const rc2 = await drive('room/next-card', room, { actions: ['open'] });
-if (rc2 && !rc2.texts.some((t) => /Л-Я/.test(t[0]))) bad('room: week 2 card did not surface');
-await drive('room/bin-cell', room, { actions: ['shelf2', 'down', 'down', 'down', 'right', 'right', 'open'] });
+await drive('room/post-refresh', wroom, { frames: 3 });
+const rc2 = await drive('room/next-card', wroom, { actions: ['open'] });
+if (rc2 && !rc2.texts.some((t) => /Monitoring/.test(t[0]))) bad('room: week 2 card did not surface');
+await drive('room/bin-cell', wroom, { actions: ['shelf2', 'down', 'down', 'down', 'right', 'right', 'open'] });
 
 // ---- the club ---------------------------------------------------------------
 {
@@ -212,10 +214,10 @@ await drive('room/bin-cell', room, { actions: ['shelf2', 'down', 'down', 'down',
 }
 
 // ---- the ledger page -------------------------------------------------------
-const lg = await drive('room/ledger', room, { actions: ['shelf2', 'timeline'] });
+const lg = await drive('room/ledger', wroom, { actions: ['shelf2', 'timeline'] });
 if (lg && !lg.texts.some((t) => t[0] === 'LEDGER')) bad('room: the ledger page did not draw');
-if (lg && !lg.texts.some((t) => t[0] === 'Russian')) bad('room: the ledger did not name its subject');
-await drive('room/ledger-closed', room, { actions: ['timeline'] });
+if (lg && !lg.texts.some((t) => t[0] === 'Home Server')) bad('room: the ledger did not name its subject');
+await drive('room/ledger-closed', wroom, { actions: ['timeline'] });
 
 // Drive the drawing directly with a long, drifting ledger: the live data has
 // too few weeks to exercise scrolling or the drift bars.

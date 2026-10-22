@@ -10,6 +10,7 @@ import { makeViewCache, camKey } from '../cache.js';
 import { computeLedger, drawLedger, rowsPerPage } from './ledger.js';
 import { overdueDaysFor } from '../pace.js';
 import { torchlight } from '../light.js';
+import { askItems, askText } from '../itemdialog.js';
 
 const ACCENT = '#7a3b2e';
 
@@ -140,6 +141,38 @@ export function makeRoom(app, room, layout, hallIndex) {
     }
   }
 
+  // I with a shelf in hand: type the items of a new card for the box under the cursor.
+  async function addItems() {
+    const c = cellAt(selShelf, cursor.level, cursor.slot);
+    if (!c || c.bin || !c.box) { say('pick a box first, then press I to add a card'); return; }
+    const box = c.box;
+    const text = await askItems(box.label);
+    if (text === null) return;
+    try {
+      const added = await app.api.addCard(box.id, text);
+      await refresh();
+      say(`${box.label}: added week ${added.weekNo} with ${added.taskCount} item${added.taskCount === 1 ? '' : 's'}`);
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
+  // B with a shelf in hand: name a new box and it goes in the first free slot.
+  async function addBox() {
+    const e = entry(selShelf);
+    const name = await askText(`New box on shelf ${selShelf}`);
+    if (name === null) return;
+    if (!name.trim()) { say('no name, no box'); return; }
+    try {
+      const added = await app.api.addBox(e.shelf.id, name);
+      await refresh();
+      cursor = { level: added.level, slot: added.slot };
+      say(`${name.trim()}: new box on shelf ${selShelf}`);
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
   async function refresh() {
     const fresh = await app.api.getRoomLayout(room.id);
     built = buildGeometry(fresh);
@@ -163,6 +196,9 @@ export function makeRoom(app, room, layout, hallIndex) {
     name: 'room',
     get hallIndex() { return hallIndex; },
 
+    /** Whether I means "add items" here, rather than "import a database". */
+    takesImport() { return selShelf !== null && !card && !ledger && !confirming; },
+
     update(dt) {
       clock += dt;
       const k = 1 - Math.exp(-dt * 8);
@@ -179,7 +215,7 @@ export function makeRoom(app, room, layout, hallIndex) {
       let status;
       if (ledger) status = '↑ ↓  scroll     T / ESC  close the ledger';
       else if (card) status = 'SPACE  put the card back     D  mark done     T  ledger';
-      else if (selShelf !== null) status = `shelf ${selShelf}   ← → box   ↑ ↓ level   SPACE open   T ledger   ESC release`;
+      else if (selShelf !== null) status = `shelf ${selShelf}   ← → box   ↑ ↓ level   SPACE open   I add card   B new box   T ledger   ESC release`;
       else status = '1-9  take a shelf     ← →  turn     ↑ ↓  leave the room';
       app.setStatus(flashT > 0 ? `${flash}` : status);
     },
@@ -228,6 +264,8 @@ export function makeRoom(app, room, layout, hallIndex) {
       else if (a === 'up') cursor.level = Math.max(0, cursor.level - 1);
       else if (a === 'down') cursor.level = Math.min(e.shelf.levels - 1, cursor.level + 1);
       else if (a === 'open') openCard();
+      else if (a === 'import') addItems();
+      else if (a === 'newbox') addBox();
       else if (a === 'back') { selShelf = null; endVisit(); }
       else if (a === 'done') say('open the card first, then press D');
     },

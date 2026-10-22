@@ -140,6 +140,20 @@ export function makeWasmBackend({ createModule, store }) {
       return result;
     },
 
+    /** Put a new box on a shelf, in its first free slot. */
+    async addBox(shelfId, label) {
+      const result = query('addBox', shelfId, 0, label);
+      await persist();
+      return result;
+    },
+
+    /** Append a card to the end of a box; each line of `text` is one item. */
+    async addCard(boxId, text) {
+      const result = query('addCard', boxId, 0, text);
+      await persist();
+      return result;
+    },
+
     async markCardDone(cardId) {
       const result = query('markDone', cardId, 0, new Date().toISOString());
       await persist();

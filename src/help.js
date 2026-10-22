@@ -24,6 +24,8 @@ const ROWS = [
   ['← →', 'move along the boxes'],
   ['↑ ↓', 'move between levels'],
   ['SPACE', 'take out the top card'],
+  ['B', 'new box: type a name, Enter'],
+  ['I', 'add a card: type items, Ctrl+Enter'],
   ['T', 'open the ledger for this box'],
   ['ESC', 'let go of the shelf'],
   ['', ''],
@@ -33,7 +35,7 @@ const ROWS = [
   ['', ''],
   ['', 'ANYWHERE'],
   ['E', 'export a .db and a .sql dump'],
-  ['I', 'import a .db file'],
+  ['I', 'import a .db file (no shelf held)'],
   ['H  ?', 'this sheet'],
 ];
 

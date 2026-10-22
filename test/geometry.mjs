@@ -68,14 +68,16 @@ const bin = g1.cells.get(`${s1.levels-1},${s1.slots-1}`);
 ok(bin && bin.bin === true, 'bottom-right cell is the bin');
 
 // --- progression ----------------------------------------------------------
-const box = s1.boxes[0];
+// SKILL's boxes are real and card-less, so progression runs on WORKSHOP's.
+const ws1 = (await stub.getRoomLayout(5)).find(s=>s.number===1);
+const box = ws1.boxes[0];
 let c = await stub.getTopCard(box.id);
 ok(c.weekNo === 1, `top card of ${c.subject} is week 1: "${c.tasks[0].text}"`);
 const r = await stub.markCardDone(c.id);
 ok(r.nextCard.weekNo === 2, 'marking it done reveals week 2');
 const tl = await stub.getTimeline(box.id);
 ok(tl.length === 1 && tl[0].weekNo === 1, 'timeline records the completed week');
-const after = (await stub.getRoomLayout(1)).find(s=>s.number===1).boxes.find(b=>b.id===box.id);
+const after = (await stub.getRoomLayout(5)).find(s=>s.number===1).boxes.find(b=>b.id===box.id);
 ok(after.doneCount === 1 && after.remaining === after.cardCount-1, 'layout reflects the completion');
 
 // drain a box completely
@@ -89,7 +91,7 @@ ok(typeof sess.id === 'number', 'the stub opens a visit');
 ok((await stub.endSession(sess.id)).closed === true, 'and closes it');
 ok((await stub.endSession(sess.id)).closed === false, 'closing twice reports false');
 const stubLed = await stub.getLedger(box.id);
-ok(stubLed.visits === 1 && stubLed.subject === 'Calculus',
+ok(stubLed.visits === 1 && stubLed.subject === 'Castle App',
    'the stub ledger reports the visit and the subject');
 
 // --- overdue flagging ------------------------------------------------------
