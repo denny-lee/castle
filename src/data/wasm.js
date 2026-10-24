@@ -147,6 +147,13 @@ export function makeWasmBackend({ createModule, store }) {
       return result;
     },
 
+    /** Move a box to the first free slot of shelf `number` in the same room. */
+    async moveBox(boxId, number) {
+      const result = query('moveBox', boxId, number);
+      await persist();
+      return result;
+    },
+
     /** Append a card to the end of a box; each line of `text` is one item. */
     async addCard(boxId, text) {
       const result = query('addCard', boxId, 0, text);
@@ -171,6 +178,16 @@ export function makeWasmBackend({ createModule, store }) {
     /** Flip one item's checkbox on a card; resolves to {done}. */
     async toggleTask(cardId, idx) {
       const result = query('toggleTask', cardId, idx);
+      await persist();
+      return result;
+    },
+
+    /** Finished cards from every box on a shelf, newest first, each with its box's name. */
+    async getBin(shelfId) { return query('bin', shelfId); },
+
+    /** Send a finished card back to its original box; resolves to {boxId, label}. */
+    async restoreCard(cardId) {
+      const result = query('restoreCard', cardId);
       await persist();
       return result;
     },

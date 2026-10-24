@@ -119,6 +119,11 @@ installInput((action) => {
     scene.action(action);
     return;
   }
+  // With a shelf in hand, E shows the shelf report instead of exporting.
+  if (action === 'export' && phase !== 'out' && phase !== 'loading' && scene?.takesExport?.()) {
+    scene.action(action);
+    return;
+  }
   if (action === 'export' || action === 'import') { handleTransfer(action); return; }
   if (phase !== 'out' && phase !== 'loading' && scene) scene.action(action);
 });

@@ -5,7 +5,7 @@ const MAP = {
   Space: 'open', Enter: 'open', NumpadEnter: 'open',
   Escape: 'back', Backspace: 'back',
   KeyD: 'done', KeyC: 'check', KeyU: 'priority', KeyR: 'rename', KeyP: 'prev', KeyY: 'yes', KeyN: 'no', KeyT: 'timeline',
-  KeyB: 'newbox', KeyE: 'export', KeyI: 'import', Slash: 'help', KeyH: 'help',
+  KeyB: 'newbox', KeyM: 'move', KeyE: 'export', KeyI: 'import', Slash: 'help', KeyH: 'help',
 };
 
 for (let i = 1; i <= 9; i++) {

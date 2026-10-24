@@ -99,6 +99,20 @@ ok(await api.getTopCard(allBoxes[0].id) === null, 'a box with no cards reports n
   ok(err && /full/.test(err.message) && n === 6, `the shelf fills up after ${n} more boxes, keeping the bin free`);
 }
 
+{
+  const shelf2 = layout.find((s) => s.number === 2);
+  const spare = (await api.getRoomLayout(1)).flatMap((s) => s.boxes).find((b) => b.label === 'x0');
+  const moved = await api.moveBox(spare.id, 2);
+  const there = (await api.getRoomLayout(1)).find((s) => s.number === 2).boxes.find((b) => b.id === spare.id);
+  ok(there && there.level === moved.level && there.slot === moved.slot, 'a box moves to another shelf in the first free slot');
+  let err = null;
+  try { await api.moveBox(spare.id, 2); } catch (e) { err = e; }
+  ok(err && /already/.test(err.message), 'moving to its own shelf is refused');
+  err = null;
+  try { await api.moveBox(spare.id, 42); } catch (e) { err = e; }
+  ok(err && /no such shelf/.test(err.message), 'a shelf that does not exist is refused');
+}
+
 const card = await api.getTopCard(calculus.id);
 ok(card.weekNo === 1 && card.subject === 'Castle App' && card.remaining === 3,
   `top card is week 1 of Calculus, "${card.tasks[0].text}"`);
@@ -114,6 +128,17 @@ let threw = null;
 try { await api.markCardDone(card.id); } catch (e) { threw = e; }
 ok(threw && /already done|no such card/.test(threw.message),
   'completing the same card twice is rejected: ' + (threw && threw.message));
+
+// ---- the bin: review finished cards, send one back ------------------------
+const shelfId = (await api.getRoomLayout(workshop.id)).find((s) => s.boxes.some((b) => b.id === calculus.id)).id;
+const bin = await api.getBin(shelfId);
+ok(bin.length === 1 && bin[0].id === card.id && bin[0].subject === calculus.label,
+  'the bin lists the finished card with its original box name');
+const sent = await api.restoreCard(card.id);
+ok(sent.boxId === calculus.id && sent.label === calculus.label, 'restoreCard names the original box');
+ok((await api.getBin(shelfId)).length === 0, 'the bin is empty after sending it back');
+ok((await api.getTopCard(calculus.id)).id === card.id, 'the card is the top of its box again');
+await api.markCardDone(card.id);
 
 const timeline = await api.getTimeline(calculus.id);
 ok(timeline.length === 1 && timeline[0].weekNo === 1 && /^\d{4}-\d{2}-\d{2}T/.test(timeline[0].doneAt),

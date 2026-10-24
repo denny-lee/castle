@@ -82,6 +82,10 @@ Build outputs: `src/data/castle.wasm` (584KB) and `castle.js` (17KB of glue).
 | Room | `ESC` | release the shelf |
 | Room | `SPACE` / `ENTER` | take the top card out / put it back |
 | Card | `D` | mark done → `Y` / `N` confirmation → card into the bin |
+| Room | `E` (shelf held) | text report of each box's top-card items, `[Box] item [Done]` / `[Inprogress]`; `↑ ↓` scrolls |
+| Room | `M` | move the box under the cursor to another shelf (type its number, Enter) |
+| Bin | `SPACE` on the bin | review finished cards from every box on the shelf; each shows its original box |
+| Bin | `← →` / `R` | browse / send the card back to its original box |
 | Room / Card | `T` | open the ledger for the box under the cursor |
 | Ledger | `↑ ↓` | scroll the weeks |
 | Ledger | `T` / `ESC` | close it |

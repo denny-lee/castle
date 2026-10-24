@@ -232,6 +232,27 @@ export const stub = {
     throw new Error('this shelf is full');
   },
 
+  async moveBox(boxId, number) {
+    const bx = db.boxes.get(boxId);
+    if (!bx) throw new Error('no such box');
+    const room = db.rooms.find((r) => r.shelves.some((s) => s.id === bx.shelfId));
+    const from = room.shelves.find((s) => s.id === bx.shelfId);
+    const to = room.shelves.find((s) => s.number === number);
+    if (!to) throw new Error('there is no such shelf in this room');
+    if (to === from) throw new Error('the box is already on that shelf');
+    for (let level = 0; level < to.levels; level++) {
+      for (let slot = 0; slot < to.slots; slot++) {
+        if (level === to.levels - 1 && slot === to.slots - 1) continue;   // the bin
+        if (to.boxes.some((b) => b.level === level && b.slot === slot)) continue;
+        from.boxes.splice(from.boxes.indexOf(bx), 1);
+        Object.assign(bx, { shelfId: to.id, level, slot });
+        to.boxes.push(bx);
+        return { boxId, level, slot };
+      }
+    }
+    throw new Error('that shelf is full');
+  },
+
   async addCard(boxId, text) {
     const bx = db.boxes.get(boxId);
     if (!bx) throw new Error('no such box');
@@ -271,6 +292,24 @@ export const stub = {
     if (!t) throw new Error('no such task');
     t.done = t.done ? 0 : 1;
     return { done: !!t.done };
+  },
+
+  async getBin(shelfId) {
+    return [...db.cards.values()]
+      .filter((c) => c.doneAt && db.boxes.get(c.boxId)?.shelfId === shelfId)
+      .sort((a, b) => b.doneAt.localeCompare(a.doneAt) || b.id - a.id)
+      .map((c) => ({
+        id: c.id, boxId: c.boxId, seq: c.seq, weekNo: c.weekNo, title: c.title,
+        subject: db.boxes.get(c.boxId).label, doneAt: c.doneAt,
+        tasks: c.tasks.map((t) => ({ idx: t.idx, text: t.text, done: !!t.done })),
+      }));
+  },
+
+  async restoreCard(cardId) {
+    const c = db.cards.get(cardId);
+    if (!c || !c.doneAt) throw new Error('no such card, or it is not in the bin');
+    c.doneAt = null;
+    return { boxId: c.boxId, label: db.boxes.get(c.boxId).label };
   },
 
   async markCardDone(cardId) {

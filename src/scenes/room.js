@@ -9,6 +9,7 @@ import {
 import { makeViewCache, camKey } from '../cache.js';
 import { computeLedger, drawLedger, rowsPerPage } from './ledger.js';
 import { overdueDaysFor } from '../pace.js';
+import { reportLines, wrapReport, reportRows, drawReport } from './report.js';
 import { torchlight } from '../light.js';
 import { askItems, askText } from '../itemdialog.js';
 
@@ -49,15 +50,18 @@ export function makeRoom(app, room, layout, hallIndex) {
 
   let selShelf = null;            // shelf number, or null
   let cursor = { level: 0, slot: 0 };
-  let card = null;                // the card currently taken out of its box
+  let card = null;                // the card currently taken out of its box (or out of the bin)
+  let bin = null;                 // {cards, i} while the bin is being paged through
   let confirming = false;
   let taskSel = 0;                // the item selected on the card in hand
   let toss = null;                // {t, from, to}
   let flash = '';
   let flashT = 0;
   let sessionId = null;           // the open visit, while a card is out
+  let report = null;              // {title, lines, rows, scroll} while the shelf report is open
   let ledger = null;              // the ledger page, while it is open
   let ledgerScroll = 0;
+  let lastWidth = 1200;
   let lastHeight = 900;           // for ledger paging; set on every render
   let clock = 0;                  // seconds in the room, for the torch flicker
 
@@ -129,7 +133,7 @@ export function makeRoom(app, room, layout, hallIndex) {
   async function openCard() {
     const c = cellAt(selShelf, cursor.level, cursor.slot);
     if (!c) return;
-    if (c.bin) { say('the bin holds what you have finished'); return; }
+    if (c.bin) { await openBin(); return; }
     if (!c.box) { say('empty slot'); return; }
     const top = await app.api.getTopCard(c.box.id);
     if (!top) { say(`${c.box.label}: no cards left — the box is clear`); return; }
@@ -141,6 +145,36 @@ export function makeRoom(app, room, layout, hallIndex) {
     } catch (err) {
       // Not being able to record the visit must not stop you reading the card.
       console.error('castle: could not record the visit', err);
+    }
+  }
+
+  // SPACE on the bin: page through everything finished on this shelf.
+  async function openBin() {
+    const e = entry(selShelf);
+    const cards = await app.api.getBin(e.shelf.id);
+    if (!cards.length) { say('the bin is empty'); return; }
+    bin = { cards, i: 0 };
+    showBinCard();
+  }
+
+  function showBinCard() {
+    const c = bin.cards[bin.i];
+    card = { ...c, binned: true, binIndex: bin.i + 1, binCount: bin.cards.length };
+    taskSel = 0;
+  }
+
+  // R on a binned card: it goes back to the box it came from.
+  async function sendBack() {
+    const id = card.id;
+    try {
+      const r = await app.api.restoreCard(id);
+      bin.cards = bin.cards.filter((c) => c.id !== id);
+      if (!bin.cards.length) { bin = null; card = null; }
+      else { bin.i = Math.min(bin.i, bin.cards.length - 1); showBinCard(); }
+      await refresh();
+      say(`sent back to ${r.label}`);
+    } catch (err) {
+      say(err.message);
     }
   }
 
@@ -187,6 +221,40 @@ export function makeRoom(app, room, layout, hallIndex) {
       const r = await app.api.renameBox(c.box.id, name);
       await refresh();
       say(`${c.box.label} is now ${r.label}`);
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
+  // M with a shelf in hand: move the box under the cursor to another shelf, by number.
+  async function moveBox() {
+    const c = cellAt(selShelf, cursor.level, cursor.slot);
+    if (!c || c.bin || !c.box) { say('pick a box first, then press M to move it'); return; }
+    const text = await askText(`Move “${c.box.label}” to shelf number`, { confirm: 'move' });
+    if (text === null) return;
+    const number = Number(text.trim());
+    if (!Number.isInteger(number) || number < 1) { say('type a shelf number'); return; }
+    try {
+      await app.api.moveBox(c.box.id, number);
+      await refresh();
+      cursor = firstBoxCell(selShelf);
+      say(`${c.box.label} moved to shelf ${number}`);
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
+  // E with a shelf in hand: every item of each box's top card, as a text sheet.
+  async function openReport() {
+    const e = entry(selShelf);
+    try {
+      const tops = await Promise.all(e.shelf.boxes.map((b) => app.api.getTopCard(b.id)));
+      report = {
+        title: `Shelf ${selShelf}`,
+        lines: reportLines(tops.filter(Boolean)),
+        rows: null,
+        scroll: 0,
+      };
     } catch (err) {
       say(err.message);
     }
@@ -243,6 +311,9 @@ export function makeRoom(app, room, layout, hallIndex) {
     /** Whether I means "add items" here, rather than "import a database". */
     takesImport() { return selShelf !== null && !card && !ledger && !confirming; },
 
+    /** Likewise E: the shelf report, rather than a data export. */
+    takesExport() { return report !== null || this.takesImport(); },
+
     update(dt) {
       clock += dt;
       const k = 1 - Math.exp(-dt * 8);
@@ -257,14 +328,23 @@ export function makeRoom(app, room, layout, hallIndex) {
       }
 
       let status;
-      if (ledger) status = '↑ ↓  scroll     T / ESC  close the ledger';
+      if (report) status = '↑ ↓  scroll     E / ESC  close the report';
+      else if (ledger) status = '↑ ↓  scroll     T / ESC  close the ledger';
+      else if (card && card.binned) status = '← →  other cards in the bin     ↑ ↓  select item     R  send back to its box     SPACE  close';
       else if (card) status = '↑ ↓  select item     C  tick / untick     SPACE  put the card back     D  mark done     T  ledger';
-      else if (selShelf !== null) status = `shelf ${selShelf}   ← → box   ↑ ↓ level   SPACE open   I add card   B new box   R rename   U priority   T ledger   ESC release`;
+      else if (selShelf !== null) status = `shelf ${selShelf}   ← → box   ↑ ↓ level   SPACE open   I add card   B new box   R rename   M move   U priority   T ledger   E report   ESC release`;
       else status = '1-9  take a shelf     ← →  turn     ↑ ↓  leave the room';
       app.setStatus(flashT > 0 ? `${flash}` : status);
     },
 
     action(a) {
+      if (report) {
+        const max = Math.max(0, (report.rows ? report.rows.length : 0) - reportRows(lastHeight, lastWidth));
+        if (a === 'export' || a === 'back') report = null;
+        else if (a === 'down') report.scroll = Math.min(max, report.scroll + 1);
+        else if (a === 'up') report.scroll = Math.max(0, report.scroll - 1);
+        return;
+      }
       if (confirming) {
         if (a === 'yes') confirmDone();
         else if (a === 'no' || a === 'back') confirming = false;
@@ -280,6 +360,18 @@ export function makeRoom(app, room, layout, hallIndex) {
       }
 
       if (a.startsWith('shelf')) { selectShelf(Number(a.slice(5))); return; }
+
+      if (card && card.binned) {
+        if (a === 'open' || a === 'back') { card = null; bin = null; }
+        else if (a === 'left' && bin.i > 0) { bin.i--; showBinCard(); }
+        else if (a === 'right' && bin.i < bin.cards.length - 1) { bin.i++; showBinCard(); }
+        else if (a === 'up') taskSel = Math.max(0, taskSel - 1);
+        else if (a === 'down') taskSel = Math.min(card.tasks.length - 1, taskSel + 1);
+        else if (a === 'rename') sendBack();
+        else if (a === 'done') say('already done — press R to send it back');
+        else if (a === 'timeline') openLedger(card.boxId);
+        return;
+      }
 
       if (card) {
         if (a === 'open' || a === 'back') { card = null; endVisit(); }
@@ -312,15 +404,18 @@ export function makeRoom(app, room, layout, hallIndex) {
       else if (a === 'down') cursor.level = Math.min(e.shelf.levels - 1, cursor.level + 1);
       else if (a === 'open') openCard();
       else if (a === 'import') addItems();
+      else if (a === 'export') openReport();
       else if (a === 'newbox') addBox();
       else if (a === 'priority') cyclePriority();
       else if (a === 'rename') renameBox();
+      else if (a === 'move') moveBox();
       else if (a === 'back') { selShelf = null; endVisit(); }
       else if (a === 'done') say('open the card first, then press D');
     },
 
     render(ctx, w, h) {
       lastHeight = h;
+      lastWidth = w;
       // The shelves are motionless; only redraw them when the view or the
       // layout actually changes.
       cache.draw(ctx, w, h, camKey(cam, `r${room.id}v${version}`), (octx, ow, oh) => {
@@ -361,7 +456,10 @@ export function makeRoom(app, room, layout, hallIndex) {
 
       // The ledger covers the card while it is open: two sheets of paper
       // fighting for the middle of the screen reads as a mess.
-      if (ledger) drawLedger(ctx, w, h, ledger, ledgerScroll);
+      if (report) {
+        if (!report.rows) report.rows = wrapReport(ctx, report.lines, w);
+        drawReport(ctx, w, h, report.title, report.rows, report.scroll);
+      } else if (ledger) drawLedger(ctx, w, h, ledger, ledgerScroll);
       else if (card) drawCard(ctx, w, h, card, taskSel);
     },
 
@@ -390,7 +488,7 @@ function drawToss(ctx, v, w, h, toss) {
 }
 
 function drawCard(ctx, w, h, card, sel) {
-  const overdue = overdueDaysFor(card);
+  const overdue = card.binned ? 0 : overdueDaysFor(card);
   const cw = Math.min(520, w * 0.62);
   const ch = Math.min(620, h * 0.76);
   const cx = w / 2, cy = h / 2;
@@ -417,6 +515,11 @@ function drawCard(ctx, w, h, card, sel) {
   label(ctx, card.subject, left, y, 25, { align: 'left', weight: 'bold' });
   y += 26;
   label(ctx, `${card.title}  ·  week ${card.weekNo}`, left, y, 15, { align: 'left', alpha: 0.6 });
+  if (card.binned) {
+    y += 20;
+    label(ctx, `from the box “${card.subject}”  ·  done ${String(card.doneAt).slice(0, 10)}`,
+      left, y, 14, { align: 'left', color: ACCENT, alpha: 0.85 });
+  }
   y += 22;
   sketchLine(ctx, left, y, right, y, 8100, { alpha: 0.6 });
   y += 34;
@@ -441,9 +544,14 @@ function drawCard(ctx, w, h, card, sel) {
 
   y = ch / 2 - 46;
   sketchLine(ctx, left, y - 16, right, y - 16, 8300, { alpha: 0.4 });
-  label(ctx, `${card.remaining} card${card.remaining === 1 ? '' : 's'} left in this box`,
-    left, y, 13, { align: 'left', alpha: 0.5 });
-  label(ctx, '↑↓ select   C tick   D done', right, y, 13, { align: 'right', alpha: 0.5 });
+  if (card.binned) {
+    label(ctx, `${card.binIndex} of ${card.binCount} in the bin`, left, y, 13, { align: 'left', alpha: 0.5 });
+    label(ctx, '← → browse   R send back', right, y, 13, { align: 'right', alpha: 0.5 });
+  } else {
+    label(ctx, `${card.remaining} card${card.remaining === 1 ? '' : 's'} left in this box`,
+      left, y, 13, { align: 'left', alpha: 0.5 });
+    label(ctx, '↑↓ select   C tick   D done', right, y, 13, { align: 'right', alpha: 0.5 });
+  }
 
   // An overdue stamp, angled across the corner like something pressed on later.
   if (overdue > 0) {

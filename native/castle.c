@@ -701,6 +701,79 @@ static char *mark_done(int card_id, const char *when) {
   return buf_take(&b);
 }
 
+/*
+ * The bin of a shelf: every finished card from any box on it, newest first. A
+ * done card keeps its box_id, so the box it came from is always known.
+ */
+static void emit_bin(Buf *b, int shelf_id) {
+  static const char *SQL =
+    "SELECT c.id, c.box_id, c.seq, c.week_no, c.title, b.label, c.done_at"
+    " FROM cards c JOIN boxes b ON b.id = c.box_id"
+    " WHERE b.shelf_id = ?1 AND c.done_at IS NOT NULL"
+    " ORDER BY c.done_at DESC, c.id DESC";
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(db, SQL, -1, &st, NULL) != SQLITE_OK) {
+    buf_str(b, "[]");
+    return;
+  }
+  sqlite3_bind_int(st, 1, shelf_id);
+  buf_str(b, "[");
+  for (int i = 0; sqlite3_step(st) == SQLITE_ROW; i++) {
+    if (i) buf_str(b, ",");
+    buf_str(b, "{\"id\":");
+    buf_int(b, sqlite3_column_int64(st, 0));
+    buf_str(b, ",\"boxId\":");
+    buf_int(b, sqlite3_column_int(st, 1));
+    buf_str(b, ",\"seq\":");
+    buf_int(b, sqlite3_column_int(st, 2));
+    buf_str(b, ",\"weekNo\":");
+    buf_int(b, sqlite3_column_int(st, 3));
+    buf_str(b, ",\"title\":");
+    buf_col_str(b, st, 4);
+    buf_str(b, ",\"subject\":");
+    buf_col_str(b, st, 5);
+    buf_str(b, ",\"doneAt\":");
+    buf_col_str(b, st, 6);
+    buf_str(b, ",\"tasks\":");
+    emit_tasks(b, sqlite3_column_int64(st, 0));
+    buf_str(b, "}");
+  }
+  buf_str(b, "]");
+  sqlite3_finalize(st);
+}
+
+/* Send a finished card back to the box it came from. */
+static char *restore_card(int card_id) {
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db,
+    "SELECT c.box_id, b.label FROM cards c JOIN boxes b ON b.id = c.box_id"
+    " WHERE c.id = ?1 AND c.done_at IS NOT NULL", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, card_id);
+  if (sqlite3_step(st) != SQLITE_ROW) {
+    sqlite3_finalize(st);
+    return json_error("no such card, or it is not in the bin");
+  }
+  int box_id = sqlite3_column_int(st, 0);
+  Buf b = {0};
+  buf_str(&b, "{\"boxId\":");
+  buf_int(&b, box_id);
+  buf_str(&b, ",\"label\":");
+  buf_col_str(&b, st, 1);
+  buf_str(&b, "}");
+  sqlite3_finalize(st);
+
+  sqlite3_prepare_v2(db, "UPDATE cards SET done_at = NULL WHERE id = ?1", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, card_id);
+  int rc = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    free(buf_take(&b));
+    set_error("restore card");
+    return json_error(last_error);
+  }
+  return buf_take(&b);
+}
+
 /* Set a box's quadrant (1..4). */
 static char *set_priority(int box_id, int priority) {
   if (priority < 1 || priority > 4) return json_error("priority must be 1 to 4");
@@ -871,18 +944,16 @@ static char *rename_box(int box_id, const char *text) {
   return buf_take(&b);
 }
 
-/* Put a new, empty box on a shelf, in the first free slot reading left to right,
- * top to bottom. The bottom-right slot is the bin and is never used. */
-static char *add_box(int shelf_id, const char *text) {
-  char label[256];
-  if (!clean_label(text, label, sizeof label)) return json_error("a box needs a name");
-
+/* The first free slot on a shelf, reading left to right, top to bottom. The
+ * bottom-right slot is the bin and is never used. Returns 1 and fills lv/sl, 0
+ * for no such shelf, or -1 when the shelf is full. */
+static int free_slot(int shelf_id, int *out_lv, int *out_sl) {
   sqlite3_stmt *st = NULL;
   sqlite3_prepare_v2(db, "SELECT levels, slots FROM shelves WHERE id = ?1", -1, &st, NULL);
   sqlite3_bind_int(st, 1, shelf_id);
   if (sqlite3_step(st) != SQLITE_ROW) {
     sqlite3_finalize(st);
-    return json_error("no such shelf");
+    return 0;
   }
   int levels = sqlite3_column_int(st, 0), slots = sqlite3_column_int(st, 1);
   sqlite3_finalize(st);
@@ -898,31 +969,88 @@ static char *add_box(int shelf_id, const char *text) {
       int taken = sqlite3_step(st) == SQLITE_ROW;
       sqlite3_finalize(st);
       if (taken) continue;
-
-      sqlite3_prepare_v2(db, "INSERT INTO boxes (shelf_id, label, level, slot) VALUES (?1, ?2, ?3, ?4)",
-                         -1, &st, NULL);
-      sqlite3_bind_int(st, 1, shelf_id);
-      sqlite3_bind_text(st, 2, label, -1, SQLITE_TRANSIENT);
-      sqlite3_bind_int(st, 3, lv);
-      sqlite3_bind_int(st, 4, sl);
-      int rc = sqlite3_step(st);
-      sqlite3_finalize(st);
-      if (rc != SQLITE_DONE) {
-        set_error("add box");
-        return json_error(last_error);
-      }
-      Buf b = {0};
-      buf_str(&b, "{\"boxId\":");
-      buf_int(&b, sqlite3_last_insert_rowid(db));
-      buf_str(&b, ",\"level\":");
-      buf_int(&b, lv);
-      buf_str(&b, ",\"slot\":");
-      buf_int(&b, sl);
-      buf_str(&b, "}");
-      return buf_take(&b);
+      *out_lv = lv;
+      *out_sl = sl;
+      return 1;
     }
   }
-  return json_error("this shelf is full");
+  return -1;
+}
+
+static char *place_json(long long box_id, int lv, int sl) {
+  Buf b = {0};
+  buf_str(&b, "{\"boxId\":");
+  buf_int(&b, box_id);
+  buf_str(&b, ",\"level\":");
+  buf_int(&b, lv);
+  buf_str(&b, ",\"slot\":");
+  buf_int(&b, sl);
+  buf_str(&b, "}");
+  return buf_take(&b);
+}
+
+/* Put a new, empty box on a shelf, in its first free slot. */
+static char *add_box(int shelf_id, const char *text) {
+  char label[256];
+  if (!clean_label(text, label, sizeof label)) return json_error("a box needs a name");
+
+  int lv = 0, sl = 0;
+  int found = free_slot(shelf_id, &lv, &sl);
+  if (found == 0) return json_error("no such shelf");
+  if (found < 0) return json_error("this shelf is full");
+
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db, "INSERT INTO boxes (shelf_id, label, level, slot) VALUES (?1, ?2, ?3, ?4)",
+                     -1, &st, NULL);
+  sqlite3_bind_int(st, 1, shelf_id);
+  sqlite3_bind_text(st, 2, label, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(st, 3, lv);
+  sqlite3_bind_int(st, 4, sl);
+  int rc = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    set_error("add box");
+    return json_error(last_error);
+  }
+  return place_json(sqlite3_last_insert_rowid(db), lv, sl);
+}
+
+/* Move a box, with all its cards, to the first free slot of another shelf in
+ * the same room, named by its number. */
+static char *move_box(int box_id, int number) {
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db,
+    "SELECT s.room_id, s.id, t.id FROM boxes b JOIN shelves s ON s.id = b.shelf_id"
+    " LEFT JOIN shelves t ON t.room_id = s.room_id AND t.number = ?2"
+    " WHERE b.id = ?1", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, box_id);
+  sqlite3_bind_int(st, 2, number);
+  if (sqlite3_step(st) != SQLITE_ROW) {
+    sqlite3_finalize(st);
+    return json_error("no such box");
+  }
+  int from = sqlite3_column_int(st, 1);
+  int to = sqlite3_column_type(st, 2) == SQLITE_NULL ? 0 : sqlite3_column_int(st, 2);
+  sqlite3_finalize(st);
+  if (!to) return json_error("there is no such shelf in this room");
+  if (to == from) return json_error("the box is already on that shelf");
+
+  int lv = 0, sl = 0;
+  if (free_slot(to, &lv, &sl) < 0) return json_error("that shelf is full");
+
+  sqlite3_prepare_v2(db, "UPDATE boxes SET shelf_id = ?2, level = ?3, slot = ?4 WHERE id = ?1",
+                     -1, &st, NULL);
+  sqlite3_bind_int(st, 1, box_id);
+  sqlite3_bind_int(st, 2, to);
+  sqlite3_bind_int(st, 3, lv);
+  sqlite3_bind_int(st, 4, sl);
+  int rc = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    set_error("move box");
+    return json_error(last_error);
+  }
+  return place_json(box_id, lv, sl);
 }
 
 /*
@@ -972,6 +1100,14 @@ EXPORT char *castle_query(const char *op, int a, int b, const char *text) {
   if (strcmp(op, "markDone") == 0) {
     return mark_done(a, text);
   }
+  if (strcmp(op, "bin") == 0) {
+    Buf buf = {0};
+    emit_bin(&buf, a);
+    return buf_take(&buf);
+  }
+  if (strcmp(op, "restoreCard") == 0) {
+    return restore_card(a);
+  }
   if (strcmp(op, "renameBox") == 0) {
     return rename_box(a, text);
   }
@@ -983,6 +1119,9 @@ EXPORT char *castle_query(const char *op, int a, int b, const char *text) {
   }
   if (strcmp(op, "addCard") == 0) {
     return add_card(a, text);
+  }
+  if (strcmp(op, "moveBox") == 0) {
+    return move_box(a, b);
   }
   if (strcmp(op, "addBox") == 0) {
     return add_box(a, text);
@@ -1100,6 +1239,29 @@ int main(void) {
   char *again = castle_query("markDone", CARD1, 0, "2026-02-01T10:00:00.000Z");
   CHECK(again && strstr(again, "error"), "completing the same card twice is refused");
   castle_free(again);
+
+  /* The bin: the finished card is listed with the box it came from, and R sends it back. */
+  int shelf_of_box = 0;
+  {
+    sqlite3_stmt *sq = NULL;
+    sqlite3_prepare_v2(db, "SELECT shelf_id FROM boxes WHERE id = 27", -1, &sq, NULL);
+    if (sqlite3_step(sq) == SQLITE_ROW) shelf_of_box = sqlite3_column_int(sq, 0);
+    sqlite3_finalize(sq);
+  }
+  char *bin = castle_query("bin", shelf_of_box, 0, NULL);
+  CHECK(bin && strstr(bin, "\"subject\":\"Castle App\"") && strstr(bin, "\"doneAt\":\"2026-02-01"),
+        "the bin lists the finished card under its original box");
+  castle_free(bin);
+  char *back = castle_query("restoreCard", CARD1, 0, NULL);
+  CHECK(back && strstr(back, "\"label\":\"Castle App\""), "restoreCard names the box it went back to");
+  castle_free(back);
+  char *top1 = castle_query("topCard", BOX, 0, NULL);
+  CHECK(top1 && strstr(top1, "\"weekNo\":1"), "the restored card is the box's top card again");
+  castle_free(top1);
+  char *notbin = castle_query("restoreCard", CARD1, 0, NULL);
+  CHECK(notbin && strstr(notbin, "error"), "a card that is not in the bin cannot be restored");
+  castle_free(notbin);
+  castle_free(castle_query("markDone", CARD1, 0, "2026-02-01T10:00:00.000Z"));
 
   char *tl = castle_query("timeline", BOX, 0, NULL);
   CHECK(tl && strstr(tl, "\"weekNo\":1") && strstr(tl, "2026-02-01"),
@@ -1220,6 +1382,23 @@ int main(void) {
   CHECK(led3 && strstr(led3, "\"weekNo\":4") && strstr(led3, "\"title\":\"Week 4\""),
         "the new card shows at the end of the ledger");
   castle_free(led3);
+
+  /* Moving a box: to another shelf of the room, by number. */
+  {
+    char *mv = castle_query("moveBox", BOX, 99, NULL);
+    CHECK(mv && strstr(mv, "error") && strstr(mv, "no such shelf"), "moving to a shelf that does not exist is refused");
+    castle_free(mv);
+    mv = castle_query("moveBox", BOX, 2, NULL);
+    CHECK(mv && strstr(mv, "\"boxId\":27"), "a box moves to another shelf");
+    castle_free(mv);
+    mv = castle_query("moveBox", BOX, 2, NULL);
+    CHECK(mv && strstr(mv, "error") && strstr(mv, "already"), "moving to the box's own shelf is refused");
+    castle_free(mv);
+    char *top = castle_query("topCard", BOX, 0, NULL);
+    CHECK(top && strstr(top, "\"boxId\":27"), "its cards moved with it");
+    castle_free(top);
+    castle_free(castle_query("moveBox", BOX, 1, NULL));   /* put it back for the checks below */
+  }
 
   /* Adding a box: first free slot, never the bin, refused when full or unnamed. */
   char *nb = castle_query("addBox", 501, 0, "  新 box ");
