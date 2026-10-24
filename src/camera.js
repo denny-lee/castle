@@ -71,7 +71,7 @@ function faceNormal(p) {
 /**
  * Draw a scene.
  *
- *   faces: {p:[[x,y,z]x3+], id, cull:'back'|'none', fill, shade, lineOpts}
+ *   faces: {p:[[x,y,z]x3+], id, cull:'back'|'none', fill, shade, lineOpts, layer}
  *          Winding must put the normal on the side the viewer should see from.
  *   segs:  {a, b, id, opts}  - bare lines (ground, paths, hatching guides)
  *   texts: {pos, text, size, opts} - world-anchored labels, drawn last
@@ -104,7 +104,9 @@ export function renderScene(ctx, v, { faces = [], segs = [], texts = [] } = {}) 
     for (const c of clipped) depth += c[2];
     ready.push({ f, scr: clipped.map((c) => projectCam(v, c)), depth: depth / clipped.length });
   }
-  ready.sort((a, b) => b.depth - a.depth);
+  // Far to near, except that a lower `layer` always goes first: a big wall's centre
+  // is nearer than a shelf standing against it, so depth alone paints it over the shelf.
+  ready.sort((a, b) => ((a.f.layer ?? 0) - (b.f.layer ?? 0)) || (b.depth - a.depth));
 
   for (const r of ready) {
     if (!polyOnScreen(v, r.scr)) continue;

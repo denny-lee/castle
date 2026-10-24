@@ -9,6 +9,9 @@
 //   getTopCard(boxId)      -> {id, weekNo, title, subject, tasks:[{text}]} | null
 //   addBox(shelfId, label) -> {boxId, level, slot}           (first free slot; never the bin)
 //   addCard(boxId, text)   -> {cardId, weekNo, taskCount}   (one task per non-blank line)
+//   renameBox(boxId, label) -> {label}
+//   setPriority(boxId, p)  -> {priority}   (1 important+urgent, 2 important, 3 urgent, 4 neither)
+//   toggleTask(cardId, idx) -> {done}                      (flip one item's checkbox)
 //   markCardDone(cardId)   -> {nextCard}
 //   getTimeline(boxId)     -> [{cardId, weekNo, doneAt}]
 //   getLedger(boxId)       -> {subject, firstDoneAt, firstWeekNo, visits, seconds,

@@ -158,6 +158,7 @@ function summarize(bx) {
     cardCount: cs.length, doneCount: done,
     remaining: cs.length - done,
     activeWeekNo: active ? active.weekNo : null,
+    priority: bx.priority || 4,
     ...anchorOf(cs),
   };
 }
@@ -247,6 +248,29 @@ export const stub = {
     db.cards.set(card.id, card);
     bx.cardIds.push(card.id);
     return { cardId: card.id, weekNo, taskCount: items.length };
+  },
+
+  async renameBox(boxId, label) {
+    const bx = db.boxes.get(boxId);
+    if (!bx) throw new Error('no such box');
+    const name = String(label || '').trim();
+    if (!name) throw new Error('a box needs a name');
+    bx.label = name;
+    return { label: name };
+  },
+
+  async setPriority(boxId, priority) {
+    const bx = db.boxes.get(boxId);
+    if (!bx) throw new Error('no such box');
+    bx.priority = priority;
+    return { priority };
+  },
+
+  async toggleTask(cardId, idx) {
+    const t = db.cards.get(cardId)?.tasks.find((x) => x.idx === idx);
+    if (!t) throw new Error('no such task');
+    t.done = t.done ? 0 : 1;
+    return { done: !!t.done };
   },
 
   async markCardDone(cardId) {

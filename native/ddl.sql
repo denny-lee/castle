@@ -33,6 +33,8 @@ CREATE TABLE boxes (
   label    TEXT NOT NULL,
   level    INTEGER NOT NULL,
   slot     INTEGER NOT NULL,
+  -- Eisenhower quadrant: 1 important+urgent, 2 important, 3 urgent, 4 neither.
+  priority INTEGER NOT NULL DEFAULT 4 CHECK (priority BETWEEN 1 AND 4),
   UNIQUE (shelf_id, level, slot)
 );
 
@@ -94,4 +96,4 @@ CREATE INDEX shelves_room ON shelves(room_id);
 CREATE INDEX sessions_box ON sessions(box_id, started_at);
 CREATE INDEX songs_room ON songs(room_id, seq);
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+INSERT INTO meta (key, value) VALUES ('schema_version', '3');

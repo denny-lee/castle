@@ -149,10 +149,12 @@ static int migrate(void) {
     if (sqlite3_step(st) == SQLITE_ROW) version = atoi((const char *)sqlite3_column_text(st, 0));
     sqlite3_finalize(st);
   }
-  if (version >= 2) return 0;
+  if (version >= 3) return 0;
+  int rc;
 
+  if (version < 2) {
   /* v2: club rooms and their playlists. */
-  int rc = exec(
+  rc = exec(
     "BEGIN;"
     "ALTER TABLE rooms ADD COLUMN kind TEXT NOT NULL DEFAULT 'library' CHECK (kind IN ('library', 'club'));"
     "CREATE TABLE IF NOT EXISTS songs ("
@@ -167,6 +169,23 @@ static int migrate(void) {
     "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');"
     "COMMIT;");
   if (rc != SQLITE_OK) { exec("ROLLBACK;"); return rc; }
+  }
+
+  /* v3: every box has an importance/urgency quadrant, 4 (neither) by default. */
+  int has_priority = 0;
+  if (sqlite3_prepare_v2(db, "SELECT 1 FROM pragma_table_info('boxes') WHERE name = 'priority'", -1, &st, NULL) == SQLITE_OK) {
+    has_priority = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+  }
+  rc = exec(
+    "BEGIN;"
+    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3');"
+    "COMMIT;");
+  if (rc != SQLITE_OK) { exec("ROLLBACK;"); return rc; }
+  if (!has_priority) {
+    rc = exec("ALTER TABLE boxes ADD COLUMN priority INTEGER NOT NULL DEFAULT 4 CHECK (priority BETWEEN 1 AND 4);");
+    if (rc != SQLITE_OK) return rc;
+  }
   return 0;
 }
 
@@ -407,7 +426,8 @@ static void emit_boxes(Buf *b, sqlite3_int64 shelf_id) {
     " (SELECT week_no FROM cards c WHERE c.box_id = b.id AND c.done_at IS NOT NULL"
     "   ORDER BY c.done_at LIMIT 1),"
     " (SELECT done_at FROM cards c WHERE c.box_id = b.id AND c.done_at IS NOT NULL"
-    "   ORDER BY c.done_at LIMIT 1)"
+    "   ORDER BY c.done_at LIMIT 1),"
+    " b.priority"
     " FROM boxes b WHERE b.shelf_id = ?1 ORDER BY b.level, b.slot";
 
   sqlite3_stmt *st = NULL;
@@ -440,6 +460,8 @@ static void emit_boxes(Buf *b, sqlite3_int64 shelf_id) {
     else buf_int(b, sqlite3_column_int(st, 7));
     buf_str(b, ",\"firstDoneAt\":");
     buf_col_str(b, st, 8);
+    buf_str(b, ",\"priority\":");
+    buf_int(b, sqlite3_column_int(st, 9));
     buf_str(b, "}");
   }
   buf_str(b, "]");
@@ -679,6 +701,59 @@ static char *mark_done(int card_id, const char *when) {
   return buf_take(&b);
 }
 
+/* Set a box's quadrant (1..4). */
+static char *set_priority(int box_id, int priority) {
+  if (priority < 1 || priority > 4) return json_error("priority must be 1 to 4");
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db, "UPDATE boxes SET priority = ?2 WHERE id = ?1", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, box_id);
+  sqlite3_bind_int(st, 2, priority);
+  int rc = sqlite3_step(st);
+  int changed = sqlite3_changes(db);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    set_error("set priority");
+    return json_error(last_error);
+  }
+  if (!changed) return json_error("no such box");
+
+  Buf b = {0};
+  buf_str(&b, "{\"priority\":");
+  buf_int(&b, priority);
+  buf_str(&b, "}");
+  return buf_take(&b);
+}
+
+/* Flip one task's checkbox and report its new state. */
+static char *toggle_task(int card_id, int idx) {
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db, "UPDATE tasks SET done = 1 - done WHERE card_id = ?1 AND idx = ?2",
+                     -1, &st, NULL);
+  sqlite3_bind_int(st, 1, card_id);
+  sqlite3_bind_int(st, 2, idx);
+  int rc = sqlite3_step(st);
+  int changed = sqlite3_changes(db);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    set_error("toggle task");
+    return json_error(last_error);
+  }
+  if (!changed) return json_error("no such task");
+
+  sqlite3_prepare_v2(db, "SELECT done FROM tasks WHERE card_id = ?1 AND idx = ?2",
+                     -1, &st, NULL);
+  sqlite3_bind_int(st, 1, card_id);
+  sqlite3_bind_int(st, 2, idx);
+  int done = sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) != 0;
+  sqlite3_finalize(st);
+
+  Buf b = {0};
+  buf_str(&b, "{\"done\":");
+  buf_str(&b, done ? "true" : "false");
+  buf_str(&b, "}");
+  return buf_take(&b);
+}
+
 /* Append a card to the end of a box. Every non-blank line of `text` becomes one
  * task, in order. The card takes the next seq and the next week number. */
 static char *add_card(int box_id, const char *text) {
@@ -755,22 +830,52 @@ static char *add_card(int box_id, const char *text) {
   return buf_take(&b);
 }
 
-/* Put a new, empty box on a shelf, in the first free slot reading left to right,
- * top to bottom. The bottom-right slot is the bin and is never used. */
-static char *add_box(int shelf_id, const char *text) {
-  char label[256];
+/* Trim `text` into `out`; returns 0 when nothing is left. A UTF-8 sequence is
+ * never cut in half when the name has to be shortened. */
+static int clean_label(const char *text, char *out, size_t cap) {
   const char *a = text ? text : "";
   size_t len = strlen(a);
   while (len && (*a == ' ' || *a == '\t' || *a == '\r' || *a == '\n')) { a++; len--; }
   while (len && (a[len - 1] == ' ' || a[len - 1] == '\t' || a[len - 1] == '\r' || a[len - 1] == '\n')) len--;
-  if (len == 0) return json_error("a box needs a name");
-  if (len >= sizeof label) {
-    len = sizeof label - 1;
-    /* do not cut a UTF-8 sequence in half */
+  if (len == 0) return 0;
+  if (len >= cap) {
+    len = cap - 1;
     while (len && ((unsigned char)a[len] & 0xC0) == 0x80) len--;
   }
-  memcpy(label, a, len);
-  label[len] = '\0';
+  memcpy(out, a, len);
+  out[len] = '\0';
+  return 1;
+}
+
+/* Give a box a new name. */
+static char *rename_box(int box_id, const char *text) {
+  char label[256];
+  if (!clean_label(text, label, sizeof label)) return json_error("a box needs a name");
+  sqlite3_stmt *st = NULL;
+  sqlite3_prepare_v2(db, "UPDATE boxes SET label = ?2 WHERE id = ?1", -1, &st, NULL);
+  sqlite3_bind_int(st, 1, box_id);
+  sqlite3_bind_text(st, 2, label, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(st);
+  int changed = sqlite3_changes(db);
+  sqlite3_finalize(st);
+  if (rc != SQLITE_DONE) {
+    set_error("rename box");
+    return json_error(last_error);
+  }
+  if (!changed) return json_error("no such box");
+
+  Buf b = {0};
+  buf_str(&b, "{\"label\":");
+  buf_json_str(&b, label);
+  buf_str(&b, "}");
+  return buf_take(&b);
+}
+
+/* Put a new, empty box on a shelf, in the first free slot reading left to right,
+ * top to bottom. The bottom-right slot is the bin and is never used. */
+static char *add_box(int shelf_id, const char *text) {
+  char label[256];
+  if (!clean_label(text, label, sizeof label)) return json_error("a box needs a name");
 
   sqlite3_stmt *st = NULL;
   sqlite3_prepare_v2(db, "SELECT levels, slots FROM shelves WHERE id = ?1", -1, &st, NULL);
@@ -866,6 +971,15 @@ EXPORT char *castle_query(const char *op, int a, int b, const char *text) {
   }
   if (strcmp(op, "markDone") == 0) {
     return mark_done(a, text);
+  }
+  if (strcmp(op, "renameBox") == 0) {
+    return rename_box(a, text);
+  }
+  if (strcmp(op, "setPriority") == 0) {
+    return set_priority(a, b);
+  }
+  if (strcmp(op, "toggleTask") == 0) {
+    return toggle_task(a, b);
   }
   if (strcmp(op, "addCard") == 0) {
     return add_card(a, text);
@@ -1058,6 +1172,40 @@ int main(void) {
   castle_free(card2);
 
   /* Appending a card: blank lines are dropped, the card goes to the end. */
+  char *tog = castle_query("toggleTask", CARD2, 1, NULL);
+  CHECK(tog && strstr(tog, "\"done\":true"), "toggleTask checks an unchecked task");
+  castle_free(tog);
+  tog = castle_query("toggleTask", CARD2, 1, NULL);
+  CHECK(tog && strstr(tog, "\"done\":false"), "toggleTask unchecks it again");
+  castle_free(tog);
+  tog = castle_query("toggleTask", CARD2, 99, NULL);
+  CHECK(tog && strstr(tog, "error"), "toggleTask rejects a missing task");
+  castle_free(tog);
+
+  char *rn = castle_query("renameBox", BOX, 0, "  新名字 ");
+  CHECK(rn && strstr(rn, "\"label\":\"新名字\""), "renameBox trims and returns the new name");
+  castle_free(rn);
+  rn = castle_query("renameBox", BOX, 0, "   ");
+  CHECK(rn && strstr(rn, "needs a name"), "renameBox refuses a blank name");
+  castle_free(rn);
+  rn = castle_query("renameBox", 9999, 0, "x");
+  CHECK(rn && strstr(rn, "no such box"), "renameBox refuses an unknown box");
+  castle_free(rn);
+
+  char *pri = castle_query("setPriority", BOX, 2, NULL);
+  CHECK(pri && strstr(pri, "\"priority\":2"), "setPriority sets a box's quadrant");
+  castle_free(pri);
+  pri = castle_query("setPriority", BOX, 5, NULL);
+  CHECK(pri && strstr(pri, "error"), "setPriority rejects a bad quadrant");
+  castle_free(pri);
+  pri = castle_query("setPriority", 9999, 1, NULL);
+  CHECK(pri && strstr(pri, "no such box"), "setPriority rejects a missing box");
+  castle_free(pri);
+  char *prilay = castle_query("layout", ROOM, 0, NULL);
+  CHECK(prilay && strstr(prilay, "\"priority\":2") && strstr(prilay, "\"priority\":4"),
+        "the layout carries priority, 4 by default");
+  castle_free(prilay);
+
   char *added = castle_query("addCard", BOX, 0, "  first item \r\n\n\tsecond 项目\n   \n");
   CHECK(added && strstr(added, "\"weekNo\":4") && strstr(added, "\"taskCount\":2"),
         "addCard appends week 4 with one task per non-blank line");

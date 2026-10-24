@@ -154,6 +154,27 @@ export function makeWasmBackend({ createModule, store }) {
       return result;
     },
 
+    /** Give a box a new name; resolves to {label}, trimmed. */
+    async renameBox(boxId, label) {
+      const result = query('renameBox', boxId, 0, label);
+      await persist();
+      return result;
+    },
+
+    /** Set a box's quadrant, 1 (important+urgent) to 4 (neither). */
+    async setPriority(boxId, priority) {
+      const result = query('setPriority', boxId, priority);
+      await persist();
+      return result;
+    },
+
+    /** Flip one item's checkbox on a card; resolves to {done}. */
+    async toggleTask(cardId, idx) {
+      const result = query('toggleTask', cardId, idx);
+      await persist();
+      return result;
+    },
+
     async markCardDone(cardId) {
       const result = query('markDone', cardId, 0, new Date().toISOString());
       await persist();

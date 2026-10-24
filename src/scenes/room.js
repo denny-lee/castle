@@ -4,7 +4,7 @@
 import { makeCamera, beginView, renderScene, project, DEG } from '../camera.js';
 import { PAPER, GRAPHITE, paperGrain, label, sketchPoly, sketchLine, fillPoly, hatch } from '../sketch.js';
 import {
-  roomShell, shelfGeometry, WALL_FRAME, WALL_YAW, WALL_ORDER, SHELF_X, EYE_Y,
+  roomShell, shelfGeometry, WALL_FRAME, WALL_YAW, WALL_ORDER, SHELF_X, EYE_Y, PRIORITY_NAME,
 } from '../geom/room.js';
 import { makeViewCache, camKey } from '../cache.js';
 import { computeLedger, drawLedger, rowsPerPage } from './ledger.js';
@@ -16,7 +16,8 @@ const ACCENT = '#7a3b2e';
 
 function buildGeometry(layout) {
   const shell = roomShell();
-  const faces = [...shell.faces];
+  // The shell is the backdrop: layer -1 keeps a wall from painting over a shelf.
+  const faces = shell.faces.map((f) => ({ ...f, layer: -1 }));
   const segs = [...shell.segs];
   const texts = [...shell.texts];
   const shelves = new Map();
@@ -50,6 +51,7 @@ export function makeRoom(app, room, layout, hallIndex) {
   let cursor = { level: 0, slot: 0 };
   let card = null;                // the card currently taken out of its box
   let confirming = false;
+  let taskSel = 0;                // the item selected on the card in hand
   let toss = null;                // {t, from, to}
   let flash = '';
   let flashT = 0;
@@ -132,6 +134,7 @@ export function makeRoom(app, room, layout, hallIndex) {
     const top = await app.api.getTopCard(c.box.id);
     if (!top) { say(`${c.box.label}: no cards left — the box is clear`); return; }
     card = top;
+    taskSel = 0;
     try {
       const started = await app.api.startSession(c.box.id, top.id);
       sessionId = started.id;
@@ -173,10 +176,51 @@ export function makeRoom(app, room, layout, hallIndex) {
     }
   }
 
+  // R with a shelf in hand: rename the box under the cursor.
+  async function renameBox() {
+    const c = cellAt(selShelf, cursor.level, cursor.slot);
+    if (!c || c.bin || !c.box) { say('pick a box first, then press R to rename it'); return; }
+    const name = await askText(`Rename “${c.box.label}”`, { initial: c.box.label, confirm: 'rename' });
+    if (name === null) return;
+    if (!name.trim()) { say('a box needs a name'); return; }
+    try {
+      const r = await app.api.renameBox(c.box.id, name);
+      await refresh();
+      say(`${c.box.label} is now ${r.label}`);
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
+  // U with a shelf in hand: step the box under the cursor to its next quadrant.
+  async function cyclePriority() {
+    const c = cellAt(selShelf, cursor.level, cursor.slot);
+    if (!c || c.bin || !c.box) { say('pick a box first, then press U'); return; }
+    const next = (c.box.priority || 4) % 4 + 1;
+    try {
+      await app.api.setPriority(c.box.id, next);
+      await refresh();
+      say(`${c.box.label}: ${PRIORITY_NAME[next]}`);
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
   async function refresh() {
     const fresh = await app.api.getRoomLayout(room.id);
     built = buildGeometry(fresh);
     version++;
+  }
+
+  async function toggleSelected() {
+    if (!card || !card.tasks.length) return;
+    const task = card.tasks[taskSel];
+    try {
+      const r = await app.api.toggleTask(card.id, task.idx);
+      task.done = r.done;
+    } catch (err) {
+      say(err.message);
+    }
   }
 
   async function confirmDone() {
@@ -214,8 +258,8 @@ export function makeRoom(app, room, layout, hallIndex) {
 
       let status;
       if (ledger) status = '↑ ↓  scroll     T / ESC  close the ledger';
-      else if (card) status = 'SPACE  put the card back     D  mark done     T  ledger';
-      else if (selShelf !== null) status = `shelf ${selShelf}   ← → box   ↑ ↓ level   SPACE open   I add card   B new box   T ledger   ESC release`;
+      else if (card) status = '↑ ↓  select item     C  tick / untick     SPACE  put the card back     D  mark done     T  ledger';
+      else if (selShelf !== null) status = `shelf ${selShelf}   ← → box   ↑ ↓ level   SPACE open   I add card   B new box   R rename   U priority   T ledger   ESC release`;
       else status = '1-9  take a shelf     ← →  turn     ↑ ↓  leave the room';
       app.setStatus(flashT > 0 ? `${flash}` : status);
     },
@@ -240,6 +284,9 @@ export function makeRoom(app, room, layout, hallIndex) {
       if (card) {
         if (a === 'open' || a === 'back') { card = null; endVisit(); }
         else if (a === 'done') confirming = true;
+        else if (a === 'up') taskSel = Math.max(0, taskSel - 1);
+        else if (a === 'down') taskSel = Math.min(card.tasks.length - 1, taskSel + 1);
+        else if (a === 'check') toggleSelected();
         else if (a === 'timeline') openLedger(card.boxId);
         return;
       }
@@ -266,6 +313,8 @@ export function makeRoom(app, room, layout, hallIndex) {
       else if (a === 'open') openCard();
       else if (a === 'import') addItems();
       else if (a === 'newbox') addBox();
+      else if (a === 'priority') cyclePriority();
+      else if (a === 'rename') renameBox();
       else if (a === 'back') { selShelf = null; endVisit(); }
       else if (a === 'done') say('open the card first, then press D');
     },
@@ -313,7 +362,7 @@ export function makeRoom(app, room, layout, hallIndex) {
       // The ledger covers the card while it is open: two sheets of paper
       // fighting for the middle of the screen reads as a mess.
       if (ledger) drawLedger(ctx, w, h, ledger, ledgerScroll);
-      else if (card) drawCard(ctx, w, h, card);
+      else if (card) drawCard(ctx, w, h, card, taskSel);
     },
 
     /* Called by main.js when the scene is torn down, so a visit is not left
@@ -340,7 +389,7 @@ function drawToss(ctx, v, w, h, toss) {
   ctx.restore();
 }
 
-function drawCard(ctx, w, h, card) {
+function drawCard(ctx, w, h, card, sel) {
   const overdue = overdueDaysFor(card);
   const cw = Math.min(520, w * 0.62);
   const ch = Math.min(620, h * 0.76);
@@ -376,15 +425,25 @@ function drawCard(ctx, w, h, card) {
     const bx = left + 3, by = y - 7;
     sketchPoly(ctx, [[bx, by], [bx + 14, by], [bx + 14, by + 14], [bx, by + 14]], 8200 + i * 31,
       { alpha: 0.7, width: 1.1 });
+    const rows = 1 + countWrapped(ctx, task.text, right - left - 28, 16);
+    if (task.done) {
+      sketchLine(ctx, bx + 2, by + 8, bx + 6, by + 12, 8600 + i * 31, { color: ACCENT, alpha: 0.9, width: 2 });
+      sketchLine(ctx, bx + 6, by + 12, bx + 18, by - 5, 8700 + i * 31, { color: ACCENT, alpha: 0.9, width: 2 });
+    }
+    if (i === sel) {
+      const top = y - 19, bot = y + 23 * (rows - 1) + 8;
+      sketchPoly(ctx, [[left - 8, top], [right + 6, top], [right + 6, bot], [left - 8, bot]], 8800 + i * 31,
+        { color: ACCENT, alpha: 0.6, width: 1.4, passes: 1 });
+    }
     wrapText(ctx, task.text, left + 28, y, right - left - 28, 23, 16);
-    y += 23 * (1 + countWrapped(ctx, task.text, right - left - 28, 16)) + 10;
+    y += 23 * rows + 10;
   });
 
   y = ch / 2 - 46;
   sketchLine(ctx, left, y - 16, right, y - 16, 8300, { alpha: 0.4 });
   label(ctx, `${card.remaining} card${card.remaining === 1 ? '' : 's'} left in this box`,
     left, y, 13, { align: 'left', alpha: 0.5 });
-  label(ctx, 'D  done', right, y, 13, { align: 'right', alpha: 0.5 });
+  label(ctx, '↑↓ select   C tick   D done', right, y, 13, { align: 'right', alpha: 0.5 });
 
   // An overdue stamp, angled across the corner like something pressed on later.
   if (overdue > 0) {

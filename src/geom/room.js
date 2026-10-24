@@ -19,7 +19,7 @@ export const ROOM_HALF = 8;
 export const ROOM_H = 9;
 export const EYE_Y = 1.72;
 
-export const SHELF_W = 4.4;
+export const SHELF_W = 4.2;
 export const SHELF_H = 6.2;
 export const SHELF_D = 1.2;
 export const SHELF_T = 0.12;
@@ -161,13 +161,20 @@ export function roomShell(id = 200) {
 }
 
 /** Where the three shelves sit along a wall, left to right from the viewer. */
-export const SHELF_X = [-5.2, 0, 5.2];
+export const SHELF_X = [-4.55, 0, 4.55];
 
 /**
  * One shelf (bookcase) with its boxes.
  * Returns geometry plus a `cells` map keyed "level,slot" holding the world-space
  * front rectangle of each box, which the room scene uses to draw highlights.
  */
+/** Box tab colours by quadrant: 1 important+urgent, 2 important, 3 urgent, 4 neither. */
+export const PRIORITY_COLOR = { 1: '#c0392b', 2: '#e0952b', 3: '#3b7bbf', 4: '#a7a79a' };
+export const PRIORITY_NAME = {
+  1: 'important and urgent', 2: 'important, not urgent',
+  3: 'urgent, not important', 4: 'not important, not urgent',
+};
+
 export function shelfGeometry(shelf, place, id) {
   const faces = [];
   const segs = [];
@@ -264,6 +271,14 @@ export function shelfGeometry(shelf, place, id) {
           opts: { alpha: 0.5, color: overdue ? ACCENT : undefined },
         });
       }
+      // Importance/urgency: a coloured tab in the top right corner of the box.
+      const tab = Math.min(bw, bh) * 0.2;
+      faces.push({
+        // Wound the same way as the box's front face, or back-face culling drops it.
+        p: [[cx + bw / 2 - tab * 0.2, y0 + bh - tab * 1.2, zf - 0.02], [cx + bw / 2 - tab * 1.2, y0 + bh - tab * 1.2, zf - 0.02],
+            [cx + bw / 2 - tab * 1.2, y0 + bh - tab * 0.2, zf - 0.02], [cx + bw / 2 - tab * 0.2, y0 + bh - tab * 0.2, zf - 0.02]],
+        id: cellId + 9, fill: PRIORITY_COLOR[bx.priority] || PRIORITY_COLOR[4], shade: 0,
+      });
       if (overdue > 0) {
         // A folded corner on the label plate: visible across the room, and it
         // does not need the text to be legible to read as "this one is late".

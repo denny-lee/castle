@@ -50,7 +50,7 @@ export function askItems(subject) {
 }
 
 /** A one-line prompt. Resolves to the typed text on Enter, or null on Escape. */
-export function askText(title) {
+export function askText(title, { initial = '', confirm = 'create' } = {}) {
   return new Promise((resolve) => {
     const shade = document.createElement('div');
     shade.style.cssText = 'position:fixed;inset:0;background:rgba(23,21,15,.45);'
@@ -66,13 +66,14 @@ export function askText(title) {
     head.style.cssText = 'font-weight:bold;font-size:18px;margin-bottom:4px;';
 
     const hint = document.createElement('div');
-    hint.textContent = 'Enter  create     Esc  cancel';
+    hint.textContent = `Enter  ${confirm}     Esc  cancel`;
     hint.style.cssText = 'font-size:12px;opacity:.6;margin-bottom:10px;';
 
     const input = document.createElement('input');
     input.type = 'text';
     input.maxLength = 60;
     input.spellcheck = false;
+    input.value = initial;
     input.style.cssText = 'width:100%;box-sizing:border-box;font:16px Georgia,serif;'
       + 'background:#fffdf6;color:#3a362e;border:1px solid #8a8272;padding:8px;';
 
@@ -80,6 +81,7 @@ export function askText(title) {
     shade.append(box);
     document.body.append(shade);
     input.focus();
+    input.select();
 
     let composing = false;
     input.addEventListener('compositionstart', () => { composing = true; });
