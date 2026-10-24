@@ -46,6 +46,7 @@ function makeCtx() {
     moveTo(x, y) { note(x, y); }, lineTo(x, y) { note(x, y); },
     bezierCurveTo(a, b, c, d, e, f) { note(e, f); },
     quadraticCurveTo(a, b, c, d) { note(c, d); },
+    arc(x, y, r) { note(x + r, y); },
     stroke() { rec.strokes++; }, fill() { rec.fills++; },
     fillRect() { rec.fills++; }, clearRect() {},
     drawImage() { rec.blits++; },
@@ -183,6 +184,22 @@ await drive('room/bin-cell', wroom, { actions: ['shelf2', 'down', 'down', 'down'
   if (c0 && c0.perFrame[2] > 200) bad(`club: a live frame costs ${c0.perFrame[2]} strokes - too many for 60fps`);
   // Lyrics must roll: at 2.9s the demo is on line 2, and the neighbours are drawn.
   if (c0 && !c0.texts.some((t) => t[0] === 'Pick a room')) bad('club: the current lyric is not drawn');
+
+  // N / P pick songs; the arrows turn to the walls, and the star waits on the left one.
+  let status = '';
+  const statusApp = { ...app, setStatus(t) { status = t; } };
+  const nav = makeClub(statusApp, clubRoom, songs, 5);
+  await new Promise((r) => setTimeout(r, 0));
+  nav.update(0.01);
+  const before = status;
+  nav.action('no'); await new Promise((r) => setTimeout(r, 0)); nav.update(0.01);
+  if (songs.length > 1 && status === before) bad('club: N did not move to the next song');
+  nav.action('prev'); await new Promise((r) => setTimeout(r, 0)); nav.update(0.01);
+  if (status !== before) bad('club: P did not return to the previous song');
+  const star = await drive('club/left-wall', nav, { actions: ['left'], frames: 60, dt: 0.05 });
+  if (star && star.perFrame[star.perFrame.length - 1] < 60) bad('club: the star on the left wall is not drawn');
+  const front = await drive('club/back-to-front', nav, { actions: ['right'], frames: 60, dt: 0.05 });
+  if (front && !front.texts.some((t) => t[0] === 'CLUB')) bad('club: turning back does not show the front wall');
 
   const heights = [];
   for (const t of [0.3, 0.6, 0.9]) {

@@ -4,7 +4,7 @@ const MAP = {
   ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
   Space: 'open', Enter: 'open', NumpadEnter: 'open',
   Escape: 'back', Backspace: 'back',
-  KeyD: 'done', KeyC: 'check', KeyU: 'priority', KeyR: 'rename', KeyY: 'yes', KeyN: 'no', KeyT: 'timeline',
+  KeyD: 'done', KeyC: 'check', KeyU: 'priority', KeyR: 'rename', KeyP: 'prev', KeyY: 'yes', KeyN: 'no', KeyT: 'timeline',
   KeyB: 'newbox', KeyE: 'export', KeyI: 'import', Slash: 'help', KeyH: 'help',
 };
 

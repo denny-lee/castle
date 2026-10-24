@@ -4,8 +4,8 @@
 
 import { makeCamera, beginView, renderScene, project, DEG } from '../camera.js';
 import { PAPER, paperGrain, label, sketchLine } from '../sketch.js';
-import { EYE_Y, WALL_YAW } from '../geom/room.js';
-import { clubShell, screenPoint } from '../geom/club.js';
+import { EYE_Y, WALL_YAW, WALL_ORDER } from '../geom/room.js';
+import { clubShell, screenPoint, fortunePoint } from '../geom/club.js';
 import { makeViewCache, camKey } from '../cache.js';
 import { torchlight } from '../light.js';
 
@@ -13,6 +13,107 @@ const LIGHT_ACCENT = '#d9a58f';   // the room accent, lifted so it reads on a da
 const LYRIC_LEAD_MS = 450;        // how long a line takes to roll into place
 const BARS_TOP = 0.38;            // fraction of the glass height the bars may reach
 const BARS_BOTTOM = 0.05;
+
+const SQRT3 = Math.sqrt(3);
+
+/** Text with every character in its own colour, walking round the rainbow. */
+function rainbowText(ctx, text, x, y, size, t, opts = {}) {
+  const chars = Array.from(text);
+  ctx.save();
+  ctx.font = `${opts.weight ?? ''} ${size}px Georgia, serif`.trim();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.globalAlpha = opts.alpha ?? 1;
+  const total = ctx.measureText(text).width;
+  let prefix = '';
+  for (let i = 0; i < chars.length; i++) {
+    const cx = x - total / 2 + ctx.measureText(prefix).width;
+    ctx.fillStyle = `hsl(${(i * 16 + t * 90) % 360} 90% 68%)`;
+    ctx.fillText(chars[i], cx, y);
+    prefix += chars[i];
+  }
+  ctx.restore();
+}
+
+/** A slowly turning hexagram inside runic rings, every stroke on its own hue. */
+function drawStar(ctx, cx, cy, R, t) {
+  const hue = (a) => `hsl(${((a / (Math.PI * 2)) * 360 + t * 40) % 360} 85% 66%)`;
+  const spin = t * 0.12;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+
+  // Two rings with a halo, and a ring of ticks turning the other way.
+  for (const [k, rr, w, a] of [[0, 1.16, 1.2, 0.5], [1, 1.28, 2.4, 0.8], [2, 1.34, 0.9, 0.4]]) {
+    ctx.strokeStyle = hue(k * 2 + 1);
+    ctx.globalAlpha = a;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * rr, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < 48; i++) {
+    const a = -spin * 1.6 + (i / 48) * Math.PI * 2;
+    const long = i % 4 === 0;
+    ctx.strokeStyle = hue(a);
+    ctx.globalAlpha = long ? 0.9 : 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * R * 1.16, cy + Math.sin(a) * R * 1.16);
+    ctx.lineTo(cx + Math.cos(a) * R * (long ? 1.25 : 1.21), cy + Math.sin(a) * R * (long ? 1.25 : 1.21));
+    ctx.stroke();
+  }
+
+  // The hexagram: twelve vertices, tips on R, notches on R/sqrt(3).
+  const pts = [];
+  for (let i = 0; i < 12; i++) {
+    const a = spin - Math.PI / 2 + (i * Math.PI) / 6;
+    const r = i % 2 === 0 ? R : R / SQRT3;
+    pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r, a]);
+  }
+  // a soft fill, then the outline
+  ctx.globalAlpha = 0.07;
+  ctx.fillStyle = hue(spin + 1);
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  for (let i = 0; i < 12; i++) {
+    const a = pts[i], b = pts[(i + 1) % 12];
+    sketchLine(ctx, a[0], a[1], b[0], b[1], 6000 + i,
+      { passes: 1, width: 3.2, alpha: 0.95, color: hue(a[2]), wobble: 0.4, overshoot: 0 });
+  }
+  // the two triangles, inside, drawn thin
+  for (const off of [0, 1]) {
+    for (let k = 0; k < 3; k++) {
+      const a = pts[(off * 2 + k * 4) % 12], b = pts[(off * 2 + k * 4 + 4) % 12];
+      sketchLine(ctx, a[0], a[1], b[0], b[1], 6100 + off * 10 + k,
+        { passes: 1, width: 1, alpha: 0.4, color: hue(a[2] + 0.5), wobble: 0.3, overshoot: 0 });
+    }
+  }
+  // the inner hexagon where the triangles cross
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const p = pts[i * 2 + 1];
+    if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = hue(spin * 3 + 2);
+  ctx.globalAlpha = 0.8;
+  ctx.stroke();
+
+  // a bright heart that breathes
+  const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
+  ctx.globalAlpha = 0.35 + 0.35 * pulse;
+  ctx.fillStyle = hue(t);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R * (0.1 + 0.04 * pulse), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
 
 const smooth = (p) => p * p * (3 - 2 * p);
 const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -39,6 +140,8 @@ export function makeClub(app, room, songs, hallIndex) {
   let ms = 0;                    // position in the song
   let paused = false;
   let clock = 0;                 // seconds in the room, for the torch flicker
+  let wall = 'front';
+  let targetYaw = WALL_YAW.front;
   let level = [];                // smoothed bar heights, 0..1
   let peak = [];                 // falling peak caps
   let hold = [];
@@ -62,6 +165,16 @@ export function makeClub(app, room, songs, hallIndex) {
     } finally {
       if (token === loadToken) loading = false;
     }
+  }
+
+  function turn(dir) {
+    const i = WALL_ORDER.indexOf(wall);
+    wall = WALL_ORDER[(i + dir + WALL_ORDER.length) % WALL_ORDER.length];
+    // Take the short way round so the view never spins the long way.
+    let want = WALL_YAW[wall];
+    while (want - targetYaw > Math.PI) want -= Math.PI * 2;
+    while (want - targetYaw < -Math.PI) want += Math.PI * 2;
+    targetYaw = want;
   }
 
   function step(dir) {
@@ -93,6 +206,7 @@ export function makeClub(app, room, songs, hallIndex) {
 
     update(dt) {
       clock += dt;
+      cam.yaw += (targetYaw - cam.yaw) * (1 - Math.exp(-dt * 8));
       if (song && !paused) {
         ms += dt * 1000;
         if (ms >= song.durationMs) { step(+1); return; }
@@ -108,12 +222,14 @@ export function makeClub(app, room, songs, hallIndex) {
         }
       }
       const where = songs.length ? `${index + 1}/${songs.length}` : 'no songs';
-      app.setStatus(`${where}   ← → song   SPACE ${paused ? 'play' : 'pause'}   ↑ ↓  leave the room`);
+      app.setStatus(`${where}   N / P  song   ← →  turn   SPACE ${paused ? 'play' : 'pause'}   ↑ ↓  leave the room`);
     },
 
     action(a) {
-      if (a === 'left') step(-1);
-      else if (a === 'right') step(+1);
+      if (a === 'left') turn(+1);
+      else if (a === 'right') turn(-1);
+      else if (a === 'no') step(+1);        // N: next song (elsewhere N means "no")
+      else if (a === 'prev') step(-1);
       else if (a === 'open') paused = !paused;
       else if (a === 'up' || a === 'down' || a === 'back') app.go('hall', { hallIndex });
     },
@@ -127,10 +243,22 @@ export function makeClub(app, room, songs, hallIndex) {
       });
 
       torchlight(ctx, w, h, clock, 0.8);
-      drawScreen(ctx, beginView(cam, w, h));
+      // The live screens are flat overlays, so only draw them once the view has
+      // settled square on their wall.
+      if (Math.abs(targetYaw - cam.yaw) < 0.04) {
+        if (wall === 'front') drawScreen(ctx, beginView(cam, w, h));
+        else if (wall === 'left') drawFortune(ctx, beginView(cam, w, h));
+      }
       label(ctx, room.name, 24, 30, 22, { align: 'left', weight: 'bold', alpha: 0.6 });
     },
   };
+
+  function drawFortune(ctx, v) {
+    const tl = project(v, fortunePoint(0, 1)), br = project(v, fortunePoint(1, 0));
+    if (!tl || !br) return;
+    const wpx = Math.abs(br[0] - tl[0]), hpx = Math.abs(br[1] - tl[1]);
+    drawStar(ctx, (tl[0] + br[0]) / 2, (tl[1] + br[1]) / 2, Math.min(wpx, hpx) * 0.33, clock);
+  }
 
   function drawScreen(ctx, v) {
     const P = (u, vv) => project(v, screenPoint(u, vv));
@@ -179,11 +307,13 @@ export function makeClub(app, room, songs, hallIndex) {
       let size = hpx * (0.075 - 0.02 * near);
       size *= Math.min(1, (wpx * 0.9) / (lines[i].text.length * size * 0.52));   // keep long lines on the glass
       const edge = Math.min(1, (vv - 0.46) / 0.08, (0.9 - vv) / 0.08);
-      say(lines[i].text, 0.5, vv, size, {
-        weight: near < 0.5 ? 'bold' : '',
-        color: near < 0.5 ? PAPER : '#bdb6a6',
-        alpha: Math.max(0, (1 - 0.28 * Math.min(Math.abs(off), 3)) * edge),
-      });
+      const alpha = Math.max(0, (1 - 0.28 * Math.min(Math.abs(off), 3)) * edge);
+      if (near < 0.5) {
+        const [lx0, ly0] = at(0.5, vv);
+        rainbowText(ctx, lines[i].text, lx0, ly0, size, clock, { weight: 'bold', alpha });
+      } else {
+        say(lines[i].text, 0.5, vv, size, { color: '#bdb6a6', alpha });
+      }
     }
 
     // ---- title, clock and progress ----

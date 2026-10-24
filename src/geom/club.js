@@ -20,6 +20,17 @@ export function screenPoint(u, v) {
   ]);
 }
 
+/** The fortune screen on the left wall, same local frame as the front one. */
+export const FORTUNE = { x0: -3.4, x1: 3.4, y0: 1.8, y1: 7.6, z: -0.43 };
+
+export function fortunePoint(u, v) {
+  return WALL_FRAME.left([
+    FORTUNE.x0 + u * (FORTUNE.x1 - FORTUNE.x0),
+    FORTUNE.y0 + v * (FORTUNE.y1 - FORTUNE.y0),
+    FORTUNE.z,
+  ]);
+}
+
 export const SCREEN_FILL = '#2b2b2b';
 
 export function clubShell(id = 20000) {
@@ -39,6 +50,20 @@ export function clubShell(id = 20000) {
     id: id + 50, fill: SCREEN_FILL, shade: 0, lineOpts: { alpha: 0.9, width: 1.3 },
   }]));
   texts.push({ pos: place([0, y1 + 0.95, -0.45]), text: 'CLUB', size: 0.62, opts: { weight: 'bold', alpha: 0.7 } });
+
+  // The fortune screen: a frame and dark glass on the left wall. What it shows
+  // (the six-pointed star) is live, drawn by scenes/club.js.
+  {
+    const lp = WALL_FRAME.left;
+    const f = FORTUNE;
+    faces.push(...box(f.x0 - 0.5, f.y0 - 0.5, -0.4, f.x1 + 0.5, f.y1 + 0.5, 0, id + 800, { shade: 0.1, shadeZ: 0.05 })
+      .map((q) => ({ ...q, p: q.p.map(lp) })));
+    faces.push({
+      p: [[f.x1, f.y0, f.z], [f.x0, f.y0, f.z], [f.x0, f.y1, f.z], [f.x1, f.y1, f.z]].map(lp),
+      id: id + 850, fill: SCREEN_FILL, shade: 0, lineOpts: { alpha: 0.9, width: 1.3 },
+    });
+    texts.push({ pos: lp([0, f.y1 + 0.95, -0.45]), text: 'FORTUNE', size: 0.5, opts: { weight: 'bold', alpha: 0.7 } });
+  }
 
   // Speaker stacks either side, each with a cone drawn on the cabinet.
   for (const [k, cx] of [[0, -7.15], [1, 7.15]]) {
